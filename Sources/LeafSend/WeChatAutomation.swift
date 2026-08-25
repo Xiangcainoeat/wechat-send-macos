@@ -39,7 +39,7 @@ enum AutomationError: LocalizedError {
 }
 
 final class WeChatAutomation {
-    static let revision = "verified-ocr-v4"
+    static let revision = "direct-search-v5"
 
     private let commandDelay: useconds_t = 250_000
     private let searchFocusDelay: UInt64 = 600_000_000
@@ -51,22 +51,19 @@ final class WeChatAutomation {
         realSend: Bool,
         source: ExecutionSource = .manual,
         accessibilityAllowed: Bool = PermissionCenter.hasAccessibility,
-        screenCaptureAllowed: Bool = PermissionCenter.hasScreenCapture,
         restoreSenderAfterExecution: Bool = false,
         clearDraftAfterPreview: Bool = false
     ) async -> AutomationResult {
+        let previouslyFrontmostApplication = NSWorkspace.shared.frontmostApplication
         defer {
             if restoreSenderAfterExecution {
-                restoreSenderApplication()
+                restore(previouslyFrontmostApplication)
             }
         }
 
         do {
             try validate(task)
-            try verifyPermissions(
-                accessibilityAllowed: accessibilityAllowed,
-                screenCaptureAllowed: screenCaptureAllowed
-            )
+            try verifyPermissions(accessibilityAllowed: accessibilityAllowed)
             trace("execution_source_\(source.rawValue)")
             trace("validated")
             let app = try await activateWeChat()
@@ -113,17 +110,17 @@ final class WeChatAutomation {
                 }
                 return AutomationResult(
                     state: .draftReady,
-                    detail: "v1.0.2：\(source.title)已通过截图确认唯一联系人；内容已填入，未按发送键"
+                    detail: "v1.0.3：\(source.title)已按确认过的联系人名称打开首项；内容已填入，未按发送键"
                 )
             }
             return AutomationResult(
                 state: .submitted,
-                detail: "v1.0.2：\(source.title)已通过截图确认唯一联系人；已向微信投递发送按键"
+                detail: "v1.0.3：\(source.title)已按确认过的联系人名称打开首项；已向微信投递发送按键"
             )
         } catch {
             return AutomationResult(
                 state: .failed,
-                detail: "v1.0.2：\(source.title)失败：\(error.localizedDescription)"
+                detail: "v1.0.3：\(source.title)失败：\(error.localizedDescription)"
             )
         }
     }
@@ -134,7 +131,7 @@ final class WeChatAutomation {
         }
         guard task.uniqueContactConfirmed else {
             throw AutomationError.invalidTask(
-                "请先编辑任务并确认该联系人名称在微信中唯一；执行时还会截图复核"
+                "请先编辑任务并确认该联系人名称在微信搜索结果中唯一"
             )
         }
         guard !task.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !task.filePaths.isEmpty else {
@@ -145,15 +142,9 @@ final class WeChatAutomation {
         }
     }
 
-    private func verifyPermissions(
-        accessibilityAllowed: Bool,
-        screenCaptureAllowed: Bool
-    ) throws {
+    private func verifyPermissions(accessibilityAllowed: Bool) throws {
         guard accessibilityAllowed else {
             throw AutomationError.permission("缺少辅助功能权限，请在设置页授权")
-        }
-        guard screenCaptureAllowed else {
-            throw AutomationError.permission("缺少屏幕录制权限，请在设置页授权后重新打开应用")
         }
     }
 
@@ -190,12 +181,6 @@ final class WeChatAutomation {
                 return
             }
 
-            if NSRunningApplication.current.processIdentifier == NSWorkspace.shared.frontmostApplication?.processIdentifier {
-                DispatchQueue.main.sync {
-                    NSApplication.shared.hide(nil)
-                }
-            }
-
             app.unhide()
             app.activate(options: [.activateAllWindows])
             AXUIElementSetAttributeValue(
@@ -223,27 +208,8 @@ final class WeChatAutomation {
         try await Task.sleep(nanoseconds: searchResultsDelay)
 
         try ensureWeChatFrontmost(app)
-        trace("capture_overlay_requested")
-        let capture = try await ScreenCaptureService.captureSearchPanel(for: app)
-        trace("capture_overlay_closed")
-        let evidence = try VisionOCR.verifyUniqueContact(contact, in: capture)
-        guard evidence.fieldMatched else {
-            throw AutomationError.actionFailed(
-                "截图没有确认搜索框中的联系人“\(contact)”，已停止；不会选择联系人或发送消息"
-            )
-        }
-        trace("search_field_ocr_confirmed")
-        guard evidence.resultMatchCount > 0 else {
-            throw AutomationError.actionFailed(
-                "截图未在联系人结果区找到“\(contact)”的精确匹配，已停止；不会按回车或发送消息"
-            )
-        }
-        guard evidence.resultMatchCount == 1 else {
-            throw AutomationError.actionFailed(
-                "截图发现 \(evidence.resultMatchCount) 个同名结果“\(contact)”，联系人不唯一；请设置唯一备注名"
-            )
-        }
-        trace("unique_result_confirmed")
+        trace("search_results_wait_complete")
+        trace("contact_uniqueness_acknowledged")
 
         try ensureWeChatFrontmost(app)
         try press(.returnKey, in: app)
@@ -396,13 +362,16 @@ final class WeChatAutomation {
         usleep(commandDelay)
     }
 
-    private func restoreSenderApplication() {
+    private func restore(_ application: NSRunningApplication?) {
         let restore = {
-            NSApplication.shared.unhide(nil)
-            NSRunningApplication.current.activate(options: [.activateAllWindows])
-            NSApplication.shared.windows
-                .first(where: { $0.canBecomeKey })?
-                .makeKeyAndOrderFront(nil)
+            guard let application, !application.isTerminated else { return }
+            application.unhide()
+            application.activate(options: [.activateAllWindows])
+            if application.processIdentifier == NSRunningApplication.current.processIdentifier {
+                NSApplication.shared.windows
+                    .first(where: { $0.canBecomeKey })?
+                    .makeKeyAndOrderFront(nil)
+            }
         }
         if Thread.isMainThread {
             restore()

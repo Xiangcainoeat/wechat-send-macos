@@ -53,11 +53,14 @@ final class TaskStore: ObservableObject {
         save()
     }
 
-    func completeExecution(for id: UUID, state: TaskState, detail: String, at date: Date = Date()) {
+    func completeExecution(
+        for id: UUID,
+        state: TaskState,
+        detail: String,
+        advancesSchedule: Bool = true,
+        at date: Date = Date()
+    ) {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
-        tasks[index].state = state
-        tasks[index].lastDetail = detail
-        tasks[index].updatedAt = date
         logs.insert(ExecutionLog(
             taskID: id,
             timestamp: date,
@@ -66,8 +69,14 @@ final class TaskStore: ObservableObject {
             detail: detail
         ), at: 0)
         if logs.count > 200 { logs = Array(logs.prefix(200)) }
-        if state == .submitted || state == .draftReady {
-            tasks[index].advanceAfterExecution(from: date)
+
+        if advancesSchedule {
+            tasks[index].state = state
+            tasks[index].lastDetail = detail
+            tasks[index].updatedAt = date
+            if state == .submitted || state == .draftReady {
+                tasks[index].advanceAfterExecution(from: date)
+            }
         }
         sortTasks()
         save()

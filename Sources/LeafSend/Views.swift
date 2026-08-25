@@ -62,7 +62,7 @@ private struct BrandHeader: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("微信发送")
                     .font(.system(size: 15, weight: .semibold))
-                Text("本机微信计划任务 · v1.0.2")
+                Text("本机微信计划任务 · v1.0.3")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -358,10 +358,7 @@ private struct WeChatStatusBar: View {
     }
 
     private var accountDescription: String {
-        let label = store.settings.accountLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        let identifier = monitor.snapshot.accountIdentifier ?? ""
-        if !label.isEmpty && !identifier.isEmpty { return "\(label) · \(identifier)" }
-        return !label.isEmpty ? label : identifier
+        store.settings.accountLabel.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
 }
@@ -420,7 +417,7 @@ private struct TaskEditorView: View {
 
                     Toggle("我确认该联系人名称在微信搜索结果中唯一", isOn: $uniqueContactConfirmed)
                         .toggleStyle(.checkbox)
-                    Text("执行时会截图识别搜索框和联系人结果；只有精确匹配唯一结果才会按回车。若有重名，请先在微信中设置唯一备注名。")
+                    Text("程序会搜索该名称并直接打开第一项，不截图、不读取微信数据库。名称必须唯一；若有重名，请先在微信中设置唯一备注名。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -572,14 +569,13 @@ private struct LogView: View {
 private struct SettingsView: View {
     @EnvironmentObject private var store: TaskStore
     @State private var accessAllowed = PermissionCenter.hasAccessibility
-    @State private var screenCaptureAllowed = PermissionCenter.hasScreenCapture
     @State private var showingRealSendConfirmation = false
     @State private var launchError = ""
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                PageHeader(title: "设置", subtitle: "系统权限只用于控制并核对本机微信。") { EmptyView() }
+                PageHeader(title: "设置", subtitle: "只需辅助功能权限，用于控制本机微信。") { EmptyView() }
 
                 SettingsSection(title: "系统权限") {
                     PermissionRow(
@@ -589,16 +585,6 @@ private struct SettingsView: View {
                         allowed: accessAllowed
                     ) {
                         PermissionCenter.requestAccessibility()
-                        refreshPermissionsLater()
-                    }
-                    Divider()
-                    PermissionRow(
-                        icon: "rectangle.inset.filled.and.person.filled",
-                        title: "屏幕录制",
-                        detail: "用于本地识别微信搜索结果；截图仅在内存中处理，不会保存或上传",
-                        allowed: screenCaptureAllowed
-                    ) {
-                        PermissionCenter.requestScreenCapture()
                         refreshPermissionsLater()
                     }
                 }
@@ -647,7 +633,7 @@ private struct SettingsView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("微信名或微信号").font(.system(size: 13, weight: .medium))
-                            Text("填写一次后优先显示；未填写时显示自动识别的 wxid")
+                            Text("用于在状态栏标记当前账号；程序不会读取微信数据目录")
                                 .font(.system(size: 11)).foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -688,14 +674,13 @@ private struct SettingsView: View {
                 store.replaceSettings(settings)
             }
         } message: {
-            Text("到点后程序会输入联系人，并通过微信截图和本地 OCR 确认搜索框及唯一结果；验证通过后才会按回车。请先用文件传输助手完成测试。")
+            Text("到点后程序会搜索联系人并直接打开第一项，再投递消息。请确保联系人名称唯一，并先用文件传输助手完成测试。")
         }
     }
 
     private func refreshPermissionsLater() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
             accessAllowed = PermissionCenter.hasAccessibility
-            screenCaptureAllowed = PermissionCenter.hasScreenCapture
         }
     }
 
@@ -788,9 +773,6 @@ struct MenuBarView: View {
     }
 
     private var accountDescription: String {
-        let label = store.settings.accountLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        let identifier = weChatStatus.snapshot.accountIdentifier ?? ""
-        if !label.isEmpty && !identifier.isEmpty { return "\(label) · \(identifier)" }
-        return !label.isEmpty ? label : identifier
+        store.settings.accountLabel.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

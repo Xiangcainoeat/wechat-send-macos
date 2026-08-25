@@ -19,17 +19,13 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-	<string>1.0.2</string>
+	<string>1.0.3</string>
     <key>CFBundleVersion</key>
-	<string>102</string>
+	<string>103</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSMultipleInstancesProhibited</key>
 	<true/>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>用于控制已登录的本机微信完成用户创建的发送任务。</string>
-    <key>NSScreenCaptureUsageDescription</key>
-    <string>用于在本机内存中识别微信搜索结果并确认联系人唯一，不保存或上传截图。</string>
     <key>NSHumanReadableCopyright</key>
     <string>Local utility</string>
 </dict>

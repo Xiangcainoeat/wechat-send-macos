@@ -3,59 +3,6 @@ import Testing
 @testable import LeafSend
 
 struct ModelTests {
-    @Test func uniqueContactVerificationIgnoresWebSuggestionsAndChatHistory() {
-        let result = VisionOCR.evaluate(
-            contact: "文件传输助手",
-            fieldTexts: ["文件传输助手"],
-            sectionLines: [
-                OCRTextLine(text: "搜索网络结果", top: 62),
-                OCRTextLine(text: "功能", top: 288),
-                OCRTextLine(text: "聊天记录", top: 394)
-            ],
-            candidateLines: [
-                OCRTextLine(text: "文件传输助手", top: 98),
-                OCRTextLine(text: "文件传输助手", top: 338),
-                OCRTextLine(text: "文件传输助手", top: 458)
-            ]
-        )
-
-        #expect(result.fieldMatched)
-        #expect(result.resultMatchCount == 1)
-        #expect(result.matchedSections == ["功能"])
-        #expect(result.isUnique)
-    }
-
-    @Test func duplicateContactResultsAreRejected() {
-        let result = VisionOCR.evaluate(
-            contact: "同名联系人",
-            fieldTexts: ["同名联系人"],
-            sectionLines: [
-                OCRTextLine(text: "联系人（2）", top: 100),
-                OCRTextLine(text: "聊天记录", top: 280)
-            ],
-            candidateLines: [
-                OCRTextLine(text: "同名联系人", top: 145),
-                OCRTextLine(text: "同名联系人", top: 215)
-            ]
-        )
-
-        #expect(result.resultMatchCount == 2)
-        #expect(!result.isUnique)
-    }
-
-    @Test func resultCannotPassWhenSearchFieldDoesNotMatch() {
-        let result = VisionOCR.evaluate(
-            contact: "目标联系人",
-            fieldTexts: ["别的内容"],
-            sectionLines: [OCRTextLine(text: "联系人", top: 100)],
-            candidateLines: [OCRTextLine(text: "目标联系人", top: 145)]
-        )
-
-        #expect(!result.fieldMatched)
-        #expect(result.resultMatchCount == 1)
-        #expect(!result.isUnique)
-    }
-
     @Test func oneOffTaskDisablesAfterExecution() {
         let now = Date()
         var task = SendTask(
@@ -129,16 +76,64 @@ struct ModelTests {
         #expect(decoded.uniqueContactConfirmed == false)
     }
 
-    @Test func newestAccountDirectoryIsSelected() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let old = root.appendingPathComponent("wxid_old")
-        let current = root.appendingPathComponent("wxid_current")
-        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: current, withIntermediateDirectories: true)
-        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 10)], ofItemAtPath: old.path)
-        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 20)], ofItemAtPath: current.path)
+    @MainActor
+    @Test func manualExecutionLogsResultWithoutConsumingScheduledTask() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = TaskStore(stateURL: directory.appendingPathComponent("state.json"))
+        let scheduledAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let task = SendTask(
+            contact: "测试联系人",
+            message: "测试",
+            filePaths: [],
+            scheduledAt: scheduledAt,
+            repeatRule: .once,
+            uniqueContactConfirmed: true
+        )
+        store.add(task)
 
-        #expect(WeChatStatusMonitor.discoverAccountIdentifier(baseURL: root) == "wxid_current")
+        store.completeExecution(
+            for: task.id,
+            state: .failed,
+            detail: "立即执行失败",
+            advancesSchedule: false,
+            at: scheduledAt.addingTimeInterval(-4)
+        )
+
+        let saved = try #require(store.task(withID: task.id))
+        #expect(saved.state == .pending)
+        #expect(saved.isEnabled)
+        #expect(saved.scheduledAt == scheduledAt)
+        #expect(store.logs.first?.result == .failed)
+        #expect(store.logs.first?.detail == "立即执行失败")
+    }
+
+    @MainActor
+    @Test func scheduledExecutionAdvancesOneOffTask() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = TaskStore(stateURL: directory.appendingPathComponent("state.json"))
+        let scheduledAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let task = SendTask(
+            contact: "测试联系人",
+            message: "测试",
+            filePaths: [],
+            scheduledAt: scheduledAt,
+            repeatRule: .once,
+            uniqueContactConfirmed: true
+        )
+        store.add(task)
+
+        store.completeExecution(
+            for: task.id,
+            state: .submitted,
+            detail: "定时执行完成",
+            advancesSchedule: true,
+            at: scheduledAt
+        )
+
+        let saved = try #require(store.task(withID: task.id))
+        #expect(saved.state == .submitted)
+        #expect(!saved.isEnabled)
+        #expect(store.logs.first?.result == .submitted)
     }
 
     @Test func unconfirmedContactStopsBeforeAutomation() async {
@@ -156,6 +151,6 @@ struct ModelTests {
         )
 
         #expect(result.state == .failed)
-        #expect(result.detail.contains("联系人名称在微信中唯一"))
+        #expect(result.detail.contains("联系人名称在微信搜索结果中唯一"))
     }
 }

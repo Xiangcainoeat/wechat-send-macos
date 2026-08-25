@@ -7,11 +7,17 @@ final class TaskScheduler: ObservableObject {
     @Published private(set) var currentTaskID: UUID?
 
     private let store: TaskStore
+    private let clearDraftAfterPreview: Bool
     private var timer: Timer?
 
-    init(store: TaskStore) {
+    init(
+        store: TaskStore,
+        autoStart: Bool = true,
+        clearDraftAfterPreview: Bool = false
+    ) {
         self.store = store
-        start()
+        self.clearDraftAfterPreview = clearDraftAfterPreview
+        if autoStart { start() }
     }
 
     deinit {
@@ -20,9 +26,11 @@ final class TaskScheduler: ObservableObject {
 
     func start() {
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
         tick()
     }
 
@@ -49,14 +57,16 @@ final class TaskScheduler: ObservableObject {
     private func execute(_ task: SendTask, source: ExecutionSource) {
         isExecuting = true
         currentTaskID = task.id
-        store.setState(
-            .running,
-            detail: "v1.0.2：\(source.title)正在打开微信并截图验证唯一联系人",
-            for: task.id
-        )
+        if source == .scheduled {
+            store.setState(
+                .running,
+                detail: "v1.0.3：定时任务正在打开微信并搜索联系人",
+                for: task.id
+            )
+        }
         let realSend = store.settings.realSendEnabled
         let accessibilityAllowed = PermissionCenter.hasAccessibility
-        let screenCaptureAllowed = PermissionCenter.hasScreenCapture
+        let shouldClearDraft = clearDraftAfterPreview
 
         Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
@@ -65,15 +75,16 @@ final class TaskScheduler: ObservableObject {
                     realSend: realSend,
                     source: source,
                     accessibilityAllowed: accessibilityAllowed,
-                    screenCaptureAllowed: screenCaptureAllowed,
-                    restoreSenderAfterExecution: true
+                    restoreSenderAfterExecution: true,
+                    clearDraftAfterPreview: shouldClearDraft
                 )
             }.value
             guard let self else { return }
             self.store.completeExecution(
                 for: task.id,
                 state: result.state,
-                detail: result.detail
+                detail: result.detail,
+                advancesSchedule: source == .scheduled
             )
             self.currentTaskID = nil
             self.isExecuting = false

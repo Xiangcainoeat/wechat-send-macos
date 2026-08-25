@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Combine
 import Foundation
 
@@ -20,7 +21,6 @@ enum WeChatPhase: String {
 
 struct WeChatSnapshot {
     var phase: WeChatPhase = .notRunning
-    var accountIdentifier: String?
     var detail = "尚未检查"
     var checkedAt = Date()
 }
@@ -59,49 +59,94 @@ final class WeChatStatusMonitor: ObservableObject {
 
     nonisolated static func inspect() async -> WeChatSnapshot {
         let now = Date()
-        let running = NSWorkspace.shared.runningApplications.contains {
+        guard let app = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == "com.tencent.xinWeChat" ||
             $0.localizedName == "WeChat" || $0.localizedName == "微信"
-        }
-        guard running else {
+        }) else {
             return WeChatSnapshot(phase: .notRunning, detail: "请先打开并登录微信", checkedAt: now)
         }
 
-        let accountID = discoverAccountIdentifier()
-        if accountID != nil {
+        if AXIsProcessTrusted(), searchMenuIsAvailable(for: app.processIdentifier) {
             return WeChatSnapshot(
                 phase: .loggedIn,
-                accountIdentifier: accountID,
-                detail: "微信正在运行，已找到本机账号标识",
+                detail: "微信搜索功能已就绪",
                 checkedAt: now
             )
         }
 
         return WeChatSnapshot(
             phase: .runningUnknown,
-            detail: "微信正在运行；未找到本机账号标识，请确认已登录",
+            detail: AXIsProcessTrusted()
+                ? "微信正在运行；执行任务时会再次确认搜索功能"
+                : "微信正在运行；授权辅助功能后可进一步检查",
             checkedAt: now
         )
     }
 
-    nonisolated static func discoverAccountIdentifier(baseURL: URL? = nil) -> String? {
-        let loginURL = baseURL ?? FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/all_users/login")
-        guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: loginURL,
-            includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return nil }
+    nonisolated private static func searchMenuIsAvailable(for processIdentifier: pid_t) -> Bool {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        guard let menuBar = element(application, attribute: kAXMenuBarAttribute),
+              let editMenu = findElement(
+                in: menuBar,
+                titles: ["编辑", "Edit"],
+                roles: [kAXMenuBarItemRole as String]
+              ),
+              let searchItem = findElement(
+                in: editMenu,
+                titles: ["搜索", "Search"],
+                roles: [kAXMenuItemRole as String]
+              ) else { return false }
 
-        return entries
-            .filter { $0.lastPathComponent.hasPrefix("wxid_") }
-            .sorted {
-                let left = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                let right = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                return left > right
-            }
-            .first?
-            .lastPathComponent
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            searchItem,
+            kAXEnabledAttribute as CFString,
+            &value
+        ) == .success else { return true }
+        return (value as? Bool) ?? true
     }
 
+    nonisolated private static func element(_ element: AXUIElement, attribute: String) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+            return nil
+        }
+        return value as! AXUIElement?
+    }
+
+    nonisolated private static func string(_ element: AXUIElement, attribute: String) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+            return nil
+        }
+        return value as? String
+    }
+
+    nonisolated private static func children(_ element: AXUIElement) -> [AXUIElement] {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &value
+        ) == .success else { return [] }
+        return value as? [AXUIElement] ?? []
+    }
+
+    nonisolated private static func findElement(
+        in root: AXUIElement,
+        titles: [String],
+        roles: [String],
+        depth: Int = 0
+    ) -> AXUIElement? {
+        guard depth < 8 else { return nil }
+        let title = string(root, attribute: kAXTitleAttribute) ?? ""
+        let role = string(root, attribute: kAXRoleAttribute) ?? ""
+        if titles.contains(title), roles.contains(role) { return root }
+        for child in children(root) {
+            if let match = findElement(in: child, titles: titles, roles: roles, depth: depth + 1) {
+                return match
+            }
+        }
+        return nil
+    }
 }
