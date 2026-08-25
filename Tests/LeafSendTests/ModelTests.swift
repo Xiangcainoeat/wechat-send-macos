@@ -3,27 +3,57 @@ import Testing
 @testable import LeafSend
 
 struct ModelTests {
-    @Test func searchFieldDetectionAcceptsWeChatIdentifierOrSearchSubroleOnly() {
-        #expect(WeChatAutomation.isSearchField(
-            role: "AXTextField",
-            subrole: "AXSearchField",
-            identifier: ""
-        ))
-        #expect(WeChatAutomation.isSearchField(
-            role: "AXTextField",
-            subrole: "",
-            identifier: "_SC_SEARCH_FIELD"
-        ))
-        #expect(!WeChatAutomation.isSearchField(
-            role: "AXTextField",
-            subrole: "",
-            identifier: "message-input"
-        ))
-        #expect(!WeChatAutomation.isSearchField(
-            role: "AXButton",
-            subrole: "AXSearchField",
-            identifier: "_SC_SEARCH_FIELD"
-        ))
+    @Test func uniqueContactVerificationIgnoresWebSuggestionsAndChatHistory() {
+        let result = VisionOCR.evaluate(
+            contact: "文件传输助手",
+            fieldTexts: ["文件传输助手"],
+            sectionLines: [
+                OCRTextLine(text: "搜索网络结果", top: 62),
+                OCRTextLine(text: "功能", top: 288),
+                OCRTextLine(text: "聊天记录", top: 394)
+            ],
+            candidateLines: [
+                OCRTextLine(text: "文件传输助手", top: 98),
+                OCRTextLine(text: "文件传输助手", top: 338),
+                OCRTextLine(text: "文件传输助手", top: 458)
+            ]
+        )
+
+        #expect(result.fieldMatched)
+        #expect(result.resultMatchCount == 1)
+        #expect(result.matchedSections == ["功能"])
+        #expect(result.isUnique)
+    }
+
+    @Test func duplicateContactResultsAreRejected() {
+        let result = VisionOCR.evaluate(
+            contact: "同名联系人",
+            fieldTexts: ["同名联系人"],
+            sectionLines: [
+                OCRTextLine(text: "联系人（2）", top: 100),
+                OCRTextLine(text: "聊天记录", top: 280)
+            ],
+            candidateLines: [
+                OCRTextLine(text: "同名联系人", top: 145),
+                OCRTextLine(text: "同名联系人", top: 215)
+            ]
+        )
+
+        #expect(result.resultMatchCount == 2)
+        #expect(!result.isUnique)
+    }
+
+    @Test func resultCannotPassWhenSearchFieldDoesNotMatch() {
+        let result = VisionOCR.evaluate(
+            contact: "目标联系人",
+            fieldTexts: ["别的内容"],
+            sectionLines: [OCRTextLine(text: "联系人", top: 100)],
+            candidateLines: [OCRTextLine(text: "目标联系人", top: 145)]
+        )
+
+        #expect(!result.fieldMatched)
+        #expect(result.resultMatchCount == 1)
+        #expect(!result.isUnique)
     }
 
     @Test func oneOffTaskDisablesAfterExecution() {

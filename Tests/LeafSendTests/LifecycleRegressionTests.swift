@@ -25,21 +25,21 @@ struct LifecycleRegressionTests {
         #expect(automation.contains("restoreSenderApplication()"))
     }
 
-    @Test func contactSelectionConfirmsSearchValueBeforeSubmittingWithoutImageRecognition() throws {
+    @Test func contactSelectionRequiresScreenshotAndUniqueOCRResultBeforeEnter() throws {
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
         let openSearch = try #require(automation.range(of: "try openSearchMenu(in: app)"))
-        let findField = try #require(automation.range(of: "let searchField = try await waitForSearchField(in: app)"))
-        let setContact = try #require(automation.range(of: "try setSearchValue(contact, in: searchField)"))
-        let confirmValue = try #require(automation.range(of: "trace(\"contact_value_confirmed\")"))
-        let confirmResult = try #require(automation.range(of: "try confirmSearchField(searchField)"))
+        let typeContact = try #require(automation.range(of: "try typeSearchContact(contact, in: app)"))
+        let capture = try #require(automation.range(of: "ScreenCaptureService.captureSearchPanel"))
+        let recognize = try #require(automation.range(of: "VisionOCR.verifyUniqueContact"))
+        let unique = try #require(automation.range(of: "guard evidence.resultMatchCount == 1"))
+        let submit = try #require(automation.range(of: "trace(\"search_confirm_enter_posted\")"))
 
-        #expect(openSearch.lowerBound < findField.lowerBound)
-        #expect(findField.lowerBound < setContact.lowerBound)
-        #expect(setContact.lowerBound < confirmValue.lowerBound)
-        #expect(confirmValue.lowerBound < confirmResult.lowerBound)
+        #expect(openSearch.lowerBound < typeContact.lowerBound)
+        #expect(typeContact.lowerBound < capture.lowerBound)
+        #expect(capture.lowerBound < recognize.lowerBound)
+        #expect(recognize.lowerBound < unique.lowerBound)
+        #expect(unique.lowerBound < submit.lowerBound)
         #expect(!automation.contains("putStringOnPasteboard(contact)"))
-        #expect(!automation.contains("VisionOCR"))
-        #expect(!automation.contains("ScreenCaptureService"))
     }
 
     @Test func buildVersionIsVisibleAndIncludedInExecutionResults() throws {
@@ -51,10 +51,20 @@ struct LifecycleRegressionTests {
         let views = try source("Sources/LeafSend/Views.swift")
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
 
-        #expect(info["CFBundleShortVersionString"] as? String == "1.0.1")
-        #expect(info["CFBundleVersion"] as? String == "101")
-        #expect(views.contains("v1.0.1"))
-        #expect(automation.contains("v1.0.1："))
+        #expect(info["CFBundleShortVersionString"] as? String == "1.0.2")
+        #expect(info["CFBundleVersion"] as? String == "102")
+        #expect((info["NSScreenCaptureUsageDescription"] as? String)?.contains("不保存或上传截图") == true)
+        #expect(views.contains("v1.0.2"))
+        #expect(automation.contains("v1.0.2："))
+    }
+
+    @Test func searchScreenshotsRemainInMemoryOnly() throws {
+        let capture = try source("Sources/LeafSend/ScreenCaptureService.swift")
+
+        #expect(capture.contains("SCScreenshotManager.captureImage"))
+        #expect(!capture.contains("CGImageDestination"))
+        #expect(!capture.contains("write(to:"))
+        #expect(!capture.contains("DEBUG_CAPTURE"))
     }
 
     @Test func publicReadmeExplainsTechnologyAndExecutionPipelineWithoutLocalPaths() throws {
@@ -65,8 +75,9 @@ struct LifecycleRegressionTests {
         #expect(readme.contains("## 实现原理"))
         #expect(readme.contains("SwiftUI"))
         #expect(readme.contains("CGEvent"))
-        #expect(readme.contains("AXValue"))
-        #expect(readme.contains("AXConfirm"))
+        #expect(readme.contains("ScreenCaptureKit"))
+        #expect(readme.contains("Vision"))
+        #expect(readme.contains("Control-Command-K"))
         #expect(readme.contains("LaunchAgent"))
         #expect(readme.contains("编辑 → 搜索"))
         #expect(readme.contains("联系人必须唯一"))
@@ -89,9 +100,12 @@ struct LifecycleRegressionTests {
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
         for stage in [
             "search_opened",
-            "search_field_ready",
-            "contact_value_confirmed",
-            "first_result_confirmed",
+            "contact_typed",
+            "capture_overlay_requested",
+            "capture_overlay_closed",
+            "search_field_ocr_confirmed",
+            "unique_result_confirmed",
+            "search_confirm_enter_posted",
             "chat_wait_complete",
             "message_pasted",
             "message_send_enter_posted",

@@ -39,11 +39,10 @@ enum AutomationError: LocalizedError {
 }
 
 final class WeChatAutomation {
-    static let revision = "verified-search-v3"
+    static let revision = "verified-ocr-v4"
 
     private let commandDelay: useconds_t = 250_000
     private let searchFocusDelay: UInt64 = 600_000_000
-    private let searchFieldRetryDelay: UInt64 = 100_000_000
     private let searchResultsDelay: UInt64 = 1_500_000_000
     private let chatOpenDelay: UInt64 = 1_000_000_000
 
@@ -52,6 +51,7 @@ final class WeChatAutomation {
         realSend: Bool,
         source: ExecutionSource = .manual,
         accessibilityAllowed: Bool = PermissionCenter.hasAccessibility,
+        screenCaptureAllowed: Bool = PermissionCenter.hasScreenCapture,
         restoreSenderAfterExecution: Bool = false,
         clearDraftAfterPreview: Bool = false
     ) async -> AutomationResult {
@@ -63,7 +63,10 @@ final class WeChatAutomation {
 
         do {
             try validate(task)
-            try verifyPermissions(accessibilityAllowed: accessibilityAllowed)
+            try verifyPermissions(
+                accessibilityAllowed: accessibilityAllowed,
+                screenCaptureAllowed: screenCaptureAllowed
+            )
             trace("execution_source_\(source.rawValue)")
             trace("validated")
             let app = try await activateWeChat()
@@ -110,17 +113,17 @@ final class WeChatAutomation {
                 }
                 return AutomationResult(
                     state: .draftReady,
-                    detail: "v1.0.1：\(source.title)已确认联系人写入搜索框并选择第一项；内容已填入，未按发送键"
+                    detail: "v1.0.2：\(source.title)已通过截图确认唯一联系人；内容已填入，未按发送键"
                 )
             }
             return AutomationResult(
                 state: .submitted,
-                detail: "v1.0.1：\(source.title)已确认联系人写入搜索框并选择第一项；已向微信投递发送按键"
+                detail: "v1.0.2：\(source.title)已通过截图确认唯一联系人；已向微信投递发送按键"
             )
         } catch {
             return AutomationResult(
                 state: .failed,
-                detail: "v1.0.1：\(source.title)失败：\(error.localizedDescription)"
+                detail: "v1.0.2：\(source.title)失败：\(error.localizedDescription)"
             )
         }
     }
@@ -131,7 +134,7 @@ final class WeChatAutomation {
         }
         guard task.uniqueContactConfirmed else {
             throw AutomationError.invalidTask(
-                "请先编辑任务并确认该联系人名称在微信中唯一；程序会直接选择搜索结果第一项"
+                "请先编辑任务并确认该联系人名称在微信中唯一；执行时还会截图复核"
             )
         }
         guard !task.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !task.filePaths.isEmpty else {
@@ -142,9 +145,15 @@ final class WeChatAutomation {
         }
     }
 
-    private func verifyPermissions(accessibilityAllowed: Bool) throws {
+    private func verifyPermissions(
+        accessibilityAllowed: Bool,
+        screenCaptureAllowed: Bool
+    ) throws {
         guard accessibilityAllowed else {
             throw AutomationError.permission("缺少辅助功能权限，请在设置页授权")
+        }
+        guard screenCaptureAllowed else {
+            throw AutomationError.permission("缺少屏幕录制权限，请在设置页授权后重新打开应用")
         }
     }
 
@@ -209,14 +218,36 @@ final class WeChatAutomation {
         try await Task.sleep(nanoseconds: searchFocusDelay)
 
         try ensureWeChatFrontmost(app)
-        let searchField = try await waitForSearchField(in: app)
-        try setSearchValue(contact, in: searchField)
-        trace("contact_value_confirmed")
+        try typeSearchContact(contact, in: app)
+        trace("contact_typed")
         try await Task.sleep(nanoseconds: searchResultsDelay)
 
         try ensureWeChatFrontmost(app)
-        try confirmSearchField(searchField)
-        trace("first_result_confirmed")
+        trace("capture_overlay_requested")
+        let capture = try await ScreenCaptureService.captureSearchPanel(for: app)
+        trace("capture_overlay_closed")
+        let evidence = try VisionOCR.verifyUniqueContact(contact, in: capture)
+        guard evidence.fieldMatched else {
+            throw AutomationError.actionFailed(
+                "截图没有确认搜索框中的联系人“\(contact)”，已停止；不会选择联系人或发送消息"
+            )
+        }
+        trace("search_field_ocr_confirmed")
+        guard evidence.resultMatchCount > 0 else {
+            throw AutomationError.actionFailed(
+                "截图未在联系人结果区找到“\(contact)”的精确匹配，已停止；不会按回车或发送消息"
+            )
+        }
+        guard evidence.resultMatchCount == 1 else {
+            throw AutomationError.actionFailed(
+                "截图发现 \(evidence.resultMatchCount) 个同名结果“\(contact)”，联系人不唯一；请设置唯一备注名"
+            )
+        }
+        trace("unique_result_confirmed")
+
+        try ensureWeChatFrontmost(app)
+        try press(.returnKey, in: app)
+        trace("search_confirm_enter_posted")
         try await Task.sleep(nanoseconds: chatOpenDelay)
         try ensureWeChatFrontmost(app)
         trace("chat_wait_complete")
@@ -235,53 +266,48 @@ final class WeChatAutomation {
         }
     }
 
-    private func waitForSearchField(in app: NSRunningApplication) async throws -> AXUIElement {
-        let application = AXUIElementCreateApplication(app.processIdentifier)
-        for _ in 0..<20 {
-            if let field = findSearchField(in: application),
-               isAXValueSettable(field),
-               axActionNames(field).contains(kAXConfirmAction as String) {
-                trace("search_field_ready")
-                return field
+    private func typeSearchContact(_ contact: String, in app: NSRunningApplication) throws {
+        try ensureWeChatFrontmost(app)
+        try globalShortcut(keyCode: KeyCode.a.rawValue, modifiers: .maskCommand)
+        try globalShortcut(keyCode: KeyCode.delete.rawValue, modifiers: [])
+
+        guard let source = CGEventSource(stateID: .hidSystemState) else {
+            throw AutomationError.actionFailed("无法创建联系人输入事件，已停止")
+        }
+        for character in contact {
+            let codeUnits = Array(String(character).utf16)
+            guard !codeUnits.isEmpty,
+                  let down = CGEvent(
+                    keyboardEventSource: source,
+                    virtualKey: KeyCode.a.rawValue,
+                    keyDown: true
+                  ),
+                  let up = CGEvent(
+                    keyboardEventSource: source,
+                    virtualKey: KeyCode.a.rawValue,
+                    keyDown: false
+                  ) else {
+                throw AutomationError.actionFailed("无法创建联系人输入事件，已停止")
             }
-            try await Task.sleep(nanoseconds: searchFieldRetryDelay)
+            codeUnits.withUnsafeBufferPointer { buffer in
+                guard let address = buffer.baseAddress else { return }
+                down.keyboardSetUnicodeString(
+                    stringLength: buffer.count,
+                    unicodeString: address
+                )
+                up.keyboardSetUnicodeString(
+                    stringLength: buffer.count,
+                    unicodeString: address
+                )
+            }
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
+                throw AutomationError.actionFailed("输入联系人时微信失去前台焦点，已停止")
+            }
+            down.post(tap: .cghidEventTap)
+            usleep(35_000)
+            up.post(tap: .cghidEventTap)
         }
-        throw AutomationError.actionFailed(
-            "微信搜索框已打开，但没有取得可写入的搜索控件，已停止；不会选择联系人或发送消息"
-        )
-    }
-
-    private func setSearchValue(_ contact: String, in searchField: AXUIElement) throws {
-        let result = AXUIElementSetAttributeValue(
-            searchField,
-            kAXValueAttribute as CFString,
-            contact as CFString
-        )
-        guard result == .success else {
-            throw AutomationError.actionFailed(
-                "无法把联系人写入微信搜索框，已停止；不会选择联系人或发送消息"
-            )
-        }
-
-        guard axString(searchField, attribute: kAXValueAttribute) == contact else {
-            throw AutomationError.actionFailed(
-                "微信搜索框没有确认联系人内容，已停止；不会选择联系人或发送消息"
-            )
-        }
-    }
-
-    private func confirmSearchField(_ searchField: AXUIElement) throws {
-        guard axActionNames(searchField).contains(kAXConfirmAction as String) else {
-            throw AutomationError.actionFailed(
-                "微信搜索框不支持确认操作，已停止；不会选择联系人或发送消息"
-            )
-        }
-        let result = AXUIElementPerformAction(searchField, kAXConfirmAction as CFString)
-        guard result == .success else {
-            throw AutomationError.actionFailed(
-                "无法确认微信搜索结果，已停止；不会输入或发送消息"
-            )
-        }
+        usleep(commandDelay)
     }
 
     private func axElement(_ element: AXUIElement, attribute: String) -> AXUIElement? {
@@ -300,43 +326,6 @@ final class WeChatAutomation {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value) == .success else { return [] }
         return value as? [AXUIElement] ?? []
-    }
-
-    private func axActionNames(_ element: AXUIElement) -> [String] {
-        var value: CFArray?
-        guard AXUIElementCopyActionNames(element, &value) == .success else { return [] }
-        return value as? [String] ?? []
-    }
-
-    private func isAXValueSettable(_ element: AXUIElement) -> Bool {
-        var settable = DarwinBoolean(false)
-        return AXUIElementIsAttributeSettable(
-            element,
-            kAXValueAttribute as CFString,
-            &settable
-        ) == .success && settable.boolValue
-    }
-
-    private func findSearchField(in root: AXUIElement, depth: Int = 0) -> AXUIElement? {
-        guard depth < 12 else { return nil }
-        let role = axString(root, attribute: kAXRoleAttribute) ?? ""
-        let subrole = axString(root, attribute: kAXSubroleAttribute) ?? ""
-        let identifier = axString(root, attribute: kAXIdentifierAttribute) ?? ""
-        if Self.isSearchField(role: role, subrole: subrole, identifier: identifier) {
-            return root
-        }
-        for child in axChildren(root) {
-            if let match = findSearchField(in: child, depth: depth + 1) {
-                return match
-            }
-        }
-        return nil
-    }
-
-    static func isSearchField(role: String, subrole: String, identifier: String) -> Bool {
-        role == kAXTextFieldRole as String && (
-            subrole == kAXSearchFieldSubrole as String || identifier == "_SC_SEARCH_FIELD"
-        )
     }
 
     private func findAXElement(in root: AXUIElement, titles: [String], roles: [String], depth: Int = 0) -> AXUIElement? {
@@ -390,6 +379,20 @@ final class WeChatAutomation {
         down.postToPid(app.processIdentifier)
         usleep(50_000)
         up.postToPid(app.processIdentifier)
+        usleep(commandDelay)
+    }
+
+    private func globalShortcut(keyCode: CGKeyCode, modifiers: CGEventFlags) throws {
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
+            throw AutomationError.actionFailed("无法创建键盘事件")
+        }
+        down.flags = modifiers
+        up.flags = modifiers
+        down.post(tap: .cghidEventTap)
+        usleep(50_000)
+        up.post(tap: .cghidEventTap)
         usleep(commandDelay)
     }
 

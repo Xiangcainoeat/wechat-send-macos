@@ -51,11 +51,12 @@ final class TaskScheduler: ObservableObject {
         currentTaskID = task.id
         store.setState(
             .running,
-            detail: "v1.0.1：\(source.title)正在打开微信并验证搜索框输入",
+            detail: "v1.0.2：\(source.title)正在打开微信并截图验证唯一联系人",
             for: task.id
         )
         let realSend = store.settings.realSendEnabled
         let accessibilityAllowed = PermissionCenter.hasAccessibility
+        let screenCaptureAllowed = PermissionCenter.hasScreenCapture
 
         Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
@@ -64,6 +65,7 @@ final class TaskScheduler: ObservableObject {
                     realSend: realSend,
                     source: source,
                     accessibilityAllowed: accessibilityAllowed,
+                    screenCaptureAllowed: screenCaptureAllowed,
                     restoreSenderAfterExecution: true
                 )
             }.value

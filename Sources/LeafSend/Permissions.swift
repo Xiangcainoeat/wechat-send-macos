@@ -1,4 +1,6 @@
+import AppKit
 import ApplicationServices
+import CoreGraphics
 import Foundation
 
 enum PermissionCenter {
@@ -6,11 +8,21 @@ enum PermissionCenter {
         AXIsProcessTrusted()
     }
 
+    static var hasScreenCapture: Bool {
+        CGPreflightScreenCaptureAccess()
+    }
+
     static func requestAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
     }
 
+    static func requestScreenCapture() {
+        if !CGRequestScreenCaptureAccess(),
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
+        }
+    }
 }
 
 enum LaunchAgentManager {

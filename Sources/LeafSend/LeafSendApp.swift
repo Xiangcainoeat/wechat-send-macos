@@ -56,19 +56,21 @@ private enum AcceptanceRunner {
         }
         let task = SendTask(
             contact: contact,
-            message: "微信发送 v1.0.1 安全验收草稿",
+            message: "微信发送 v1.0.2 安全验收草稿",
             filePaths: [],
             scheduledAt: Date(),
             repeatRule: .once,
             uniqueContactConfirmed: true
         )
         let accessibilityAllowed = PermissionCenter.hasAccessibility
+        let screenCaptureAllowed = PermissionCenter.hasScreenCapture
         let result = await Task.detached(priority: .userInitiated) {
             await WeChatAutomation().execute(
                 task: task,
                 realSend: false,
                 source: .acceptance,
                 accessibilityAllowed: accessibilityAllowed,
+                screenCaptureAllowed: screenCaptureAllowed,
                 restoreSenderAfterExecution: true,
                 clearDraftAfterPreview: true
             )
@@ -80,6 +82,7 @@ private enum AcceptanceRunner {
             "state": result.state.rawValue,
             "detail": result.detail,
             "accessibilityAllowed": accessibilityAllowed,
+            "screenCaptureAllowed": screenCaptureAllowed,
             "startedInBackground": startsInBackground,
             "senderIsFrontmost": NSRunningApplication.current.isActive,
             "timestamp": ISO8601DateFormatter().string(from: Date())
