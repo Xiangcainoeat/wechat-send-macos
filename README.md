@@ -27,8 +27,9 @@
   → 校验联系人、内容、附件和唯一性确认
   → 激活已登录的微信
   → 通过辅助功能打开“编辑 → 搜索”
-  → 直接粘贴联系人名称
-  → 等待搜索结果后按 Enter 选择第一项
+  → 定位微信的 AXSearchField
+  → 通过 AXValue 写入并回读联系人名称
+  → 等待搜索结果后通过 AXConfirm 选择第一项
   → 粘贴文字和/或文件
   → 安全预览停在草稿，或在真实发送模式下按 Enter
   → 写入任务状态和执行记录
@@ -42,9 +43,9 @@
 | --- | --- | --- |
 | 语言与构建 | Swift 5.10、Swift Package Manager | 应用、测试和 Release 构建 |
 | 桌面界面 | SwiftUI、AppKit | 主窗口、菜单栏、文件选择与应用生命周期 |
-| UI 自动化 | macOS Accessibility API、`AXUIElement` | 定位并触发微信菜单中的“编辑 → 搜索” |
-| 键盘输入 | Core Graphics、`CGEvent` | 向微信进程发送粘贴、Enter 和清理草稿等按键 |
-| 内容传递 | `NSPasteboard` | 向微信输入联系人、文字和本机文件 URL |
+| UI 自动化 | macOS Accessibility API、`AXUIElement`、`AXValue`、`AXConfirm` | 打开搜索、验证联系人已写入并确认首项 |
+| 键盘输入 | Core Graphics、`CGEvent` | 向微信进程发送消息粘贴、发送 Enter 和清理草稿等按键 |
+| 内容传递 | `NSPasteboard` | 向微信输入文字和本机文件 URL |
 | 应用与账号状态 | `NSWorkspace`、Foundation 文件 API | 检查微信进程，并被动发现本机 `wxid` 目录标识 |
 | 本地调度 | Foundation `Timer`、Swift Concurrency | 每 5 秒检查到期任务并串行执行 |
 | 数据保存 | `Codable`、JSON、原子写入 | 保存任务、设置和最近 200 条执行记录 |
@@ -59,7 +60,7 @@
 
 ### 2. 到点调度与过期保护
 
-`TaskScheduler` 使用主运行循环中的 `Timer` 每 5 秒查询一次到期任务，同一时间只允许一个任务执行。若 Mac 睡眠或应用未运行导致任务晚到超过 120 秒，任务会进入“需要确认”，不会在用户不知情时补发。每天和每周任务在成功提交或生成预览草稿后计算下一次时间。
+`TaskScheduler` 使用主运行循环中的 `Timer` 每 5 秒查询一次到期任务，同一时间只允许一个任务执行。定时任务和“立即执行”使用同一个自动化入口，完成后都会恢复“微信发送”窗口。若 Mac 睡眠或应用未运行导致任务晚到超过 120 秒，任务会进入“需要确认”，不会在用户不知情时补发。每天和每周任务在成功提交或生成预览草稿后计算下一次时间。
 
 ### 3. 微信状态识别
 
@@ -67,9 +68,9 @@
 
 ### 4. 打开搜索并选择联系人
 
-程序先激活微信，再通过 Accessibility API 遍历菜单栏并触发“编辑 → 搜索”。搜索框出现后不再截图或识图，而是把联系人写入 `NSPasteboard`，用定向到微信进程的 `CGEvent` 发送 `Command+V`，等待结果稳定后按 Enter 选择第一项。
+程序先激活微信，再通过 Accessibility API 遍历菜单栏并触发“编辑 → 搜索”。微信的独立搜索框在后台触发时可能没有键盘焦点，因此程序不再依赖盲发 `Command+V`：它会定位子角色为 `AXSearchField` 或标识为 `_SC_SEARCH_FIELD` 的控件，通过 `AXValue` 直接写入联系人，并回读确认值完全一致。只有验证成功后，才调用该搜索框支持的 `AXConfirm` 动作；这相当于在搜索框中按 Enter 选择第一项。
 
-这一机制避免了截图导致微信搜索界面退出的问题，但也意味着程序无法验证结果是否重名。因此每个任务都必须由用户确认联系人名称唯一；未确认时会在任何粘贴或发送动作前停止。
+这一机制既避免了截图导致微信搜索界面退出，也避免了定时执行时搜索框无焦点却被误记为已输入。若找不到可写搜索框、写入失败、回读不一致或控件不支持确认，程序会在选择联系人和发送消息之前安全停止。程序仍无法判断结果是否重名，因此每个任务都必须由用户确认联系人名称唯一。
 
 ### 5. 消息与附件发送
 
@@ -88,7 +89,7 @@ Accessibility API 和进程定向键盘事件需要 macOS“辅助功能”权�
 
 ## 下载与安装
 
-从 [Releases](https://github.com/Xiangcainoeat/wechat-send-macos/releases) 下载 `WeChatSend-v1.0.0-macOS.zip`，解压后把“微信发送.app”移动到“应用程序”。
+从 [Releases](https://github.com/Xiangcainoeat/wechat-send-macos/releases) 下载 `WeChatSend-v1.0.1-macOS.zip`，解压后把“微信发送.app”移动到“应用程序”。
 
 当前公开压缩包使用 ad-hoc 签名，没有 Apple Developer ID 公证。首次打开若被 Gatekeeper 阻止，请在“系统设置 → 隐私与安全性”中核对应用来源后选择“仍要打开”。不信任预编译文件时，请按下一节从源码构建。
 
@@ -137,4 +138,4 @@ chmod +x scripts/build-app.sh scripts/install-app.sh
 
 ## 版本
 
-当前公开版本：`1.0.0`。详细变更见 [CHANGELOG.md](CHANGELOG.md)。
+当前公开版本：`1.0.1`。详细变更见 [CHANGELOG.md](CHANGELOG.md)。

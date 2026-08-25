@@ -28,7 +28,7 @@ final class TaskScheduler: ObservableObject {
 
     func runNow(_ task: SendTask) {
         guard !isExecuting else { return }
-        execute(task, restoreSenderAfterExecution: true)
+        execute(task, source: .manual)
     }
 
     private func tick(now: Date = Date()) {
@@ -43,13 +43,17 @@ final class TaskScheduler: ObservableObject {
             )
             return
         }
-        execute(task, restoreSenderAfterExecution: false)
+        execute(task, source: .scheduled)
     }
 
-    private func execute(_ task: SendTask, restoreSenderAfterExecution: Bool) {
+    private func execute(_ task: SendTask, source: ExecutionSource) {
         isExecuting = true
         currentTaskID = task.id
-        store.setState(.running, detail: "v1.0.0：正在打开微信并搜索唯一联系人", for: task.id)
+        store.setState(
+            .running,
+            detail: "v1.0.1：\(source.title)正在打开微信并验证搜索框输入",
+            for: task.id
+        )
         let realSend = store.settings.realSendEnabled
         let accessibilityAllowed = PermissionCenter.hasAccessibility
 
@@ -58,8 +62,9 @@ final class TaskScheduler: ObservableObject {
                 await WeChatAutomation().execute(
                     task: task,
                     realSend: realSend,
+                    source: source,
                     accessibilityAllowed: accessibilityAllowed,
-                    restoreSenderAfterExecution: restoreSenderAfterExecution
+                    restoreSenderAfterExecution: true
                 )
             }.value
             guard let self else { return }

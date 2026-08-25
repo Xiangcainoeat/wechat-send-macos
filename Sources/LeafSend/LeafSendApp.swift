@@ -49,9 +49,14 @@ private enum AcceptanceRunner {
         hasRun = true
 
         let contact = environment["WECHAT_SEND_ACCEPTANCE_CONTACT"] ?? "文件传输助手"
+        let startsInBackground = environment["WECHAT_SEND_ACCEPTANCE_BACKGROUND"] == "1"
+        if startsInBackground {
+            NSApplication.shared.hide(nil)
+            try? await Task.sleep(nanoseconds: 700_000_000)
+        }
         let task = SendTask(
             contact: contact,
-            message: "微信发送 v1.0.0 安全验收草稿",
+            message: "微信发送 v1.0.1 安全验收草稿",
             filePaths: [],
             scheduledAt: Date(),
             repeatRule: .once,
@@ -62,6 +67,7 @@ private enum AcceptanceRunner {
             await WeChatAutomation().execute(
                 task: task,
                 realSend: false,
+                source: .acceptance,
                 accessibilityAllowed: accessibilityAllowed,
                 restoreSenderAfterExecution: true,
                 clearDraftAfterPreview: true
@@ -74,6 +80,7 @@ private enum AcceptanceRunner {
             "state": result.state.rawValue,
             "detail": result.detail,
             "accessibilityAllowed": accessibilityAllowed,
+            "startedInBackground": startsInBackground,
             "senderIsFrontmost": NSRunningApplication.current.isActive,
             "timestamp": ISO8601DateFormatter().string(from: Date())
         ]

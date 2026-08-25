@@ -3,6 +3,29 @@ import Testing
 @testable import LeafSend
 
 struct ModelTests {
+    @Test func searchFieldDetectionAcceptsWeChatIdentifierOrSearchSubroleOnly() {
+        #expect(WeChatAutomation.isSearchField(
+            role: "AXTextField",
+            subrole: "AXSearchField",
+            identifier: ""
+        ))
+        #expect(WeChatAutomation.isSearchField(
+            role: "AXTextField",
+            subrole: "",
+            identifier: "_SC_SEARCH_FIELD"
+        ))
+        #expect(!WeChatAutomation.isSearchField(
+            role: "AXTextField",
+            subrole: "",
+            identifier: "message-input"
+        ))
+        #expect(!WeChatAutomation.isSearchField(
+            role: "AXButton",
+            subrole: "AXSearchField",
+            identifier: "_SC_SEARCH_FIELD"
+        ))
+    }
+
     @Test func oneOffTaskDisablesAfterExecution() {
         let now = Date()
         var task = SendTask(

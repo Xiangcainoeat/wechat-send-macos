@@ -13,23 +13,31 @@ struct LifecycleRegressionTests {
         #expect(stop.lowerBound < replace.lowerBound)
     }
 
-    @Test func manualExecutionRequestsSenderWindowRestoration() throws {
+    @Test func scheduledAndManualExecutionUseTheSameWindowRestorationPath() throws {
         let scheduler = try source("Sources/LeafSend/Scheduler.swift")
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
 
-        #expect(scheduler.contains("execute(task, restoreSenderAfterExecution: true)"))
+        #expect(scheduler.contains("execute(task, source: .manual)"))
+        #expect(scheduler.contains("execute(task, source: .scheduled)"))
+        #expect(scheduler.contains("restoreSenderAfterExecution: true"))
+        #expect(!scheduler.contains("restoreSenderAfterExecution: false"))
         #expect(automation.contains("defer"))
         #expect(automation.contains("restoreSenderApplication()"))
     }
 
-    @Test func contactSelectionUsesPasteAndEnterWithoutImageRecognition() throws {
+    @Test func contactSelectionConfirmsSearchValueBeforeSubmittingWithoutImageRecognition() throws {
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
         let openSearch = try #require(automation.range(of: "try openSearchMenu(in: app)"))
-        let pasteContact = try #require(automation.range(of: "try putStringOnPasteboard(contact)"))
-        let enterResult = try #require(automation.range(of: "try press(.returnKey, in: app)", range: pasteContact.upperBound..<automation.endIndex))
+        let findField = try #require(automation.range(of: "let searchField = try await waitForSearchField(in: app)"))
+        let setContact = try #require(automation.range(of: "try setSearchValue(contact, in: searchField)"))
+        let confirmValue = try #require(automation.range(of: "trace(\"contact_value_confirmed\")"))
+        let confirmResult = try #require(automation.range(of: "try confirmSearchField(searchField)"))
 
-        #expect(openSearch.lowerBound < pasteContact.lowerBound)
-        #expect(pasteContact.lowerBound < enterResult.lowerBound)
+        #expect(openSearch.lowerBound < findField.lowerBound)
+        #expect(findField.lowerBound < setContact.lowerBound)
+        #expect(setContact.lowerBound < confirmValue.lowerBound)
+        #expect(confirmValue.lowerBound < confirmResult.lowerBound)
+        #expect(!automation.contains("putStringOnPasteboard(contact)"))
         #expect(!automation.contains("VisionOCR"))
         #expect(!automation.contains("ScreenCaptureService"))
     }
@@ -43,10 +51,10 @@ struct LifecycleRegressionTests {
         let views = try source("Sources/LeafSend/Views.swift")
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
 
-        #expect(info["CFBundleShortVersionString"] as? String == "1.0.0")
-        #expect(info["CFBundleVersion"] as? String == "100")
-        #expect(views.contains("v1.0.0"))
-        #expect(automation.contains("v1.0.0："))
+        #expect(info["CFBundleShortVersionString"] as? String == "1.0.1")
+        #expect(info["CFBundleVersion"] as? String == "101")
+        #expect(views.contains("v1.0.1"))
+        #expect(automation.contains("v1.0.1："))
     }
 
     @Test func publicReadmeExplainsTechnologyAndExecutionPipelineWithoutLocalPaths() throws {
@@ -57,6 +65,8 @@ struct LifecycleRegressionTests {
         #expect(readme.contains("## 实现原理"))
         #expect(readme.contains("SwiftUI"))
         #expect(readme.contains("CGEvent"))
+        #expect(readme.contains("AXValue"))
+        #expect(readme.contains("AXConfirm"))
         #expect(readme.contains("LaunchAgent"))
         #expect(readme.contains("编辑 → 搜索"))
         #expect(readme.contains("联系人必须唯一"))
@@ -69,6 +79,7 @@ struct LifecycleRegressionTests {
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
 
         #expect(app.contains("WECHAT_SEND_ACCEPTANCE_REPORT"))
+        #expect(app.contains("WECHAT_SEND_ACCEPTANCE_BACKGROUND"))
         #expect(app.contains("realSend: false"))
         #expect(app.contains("clearDraftAfterPreview: true"))
         #expect(automation.contains("preview_draft_cleared"))
@@ -78,10 +89,12 @@ struct LifecycleRegressionTests {
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
         for stage in [
             "search_opened",
-            "contact_pasted",
-            "first_result_entered",
+            "search_field_ready",
+            "contact_value_confirmed",
+            "first_result_confirmed",
             "chat_wait_complete",
             "message_pasted",
+            "message_send_enter_posted",
             "sender_restored"
         ] {
             #expect(automation.contains("trace(\"\(stage)\")"))
