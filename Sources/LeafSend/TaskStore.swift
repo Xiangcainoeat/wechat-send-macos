@@ -26,6 +26,7 @@ final class TaskStore: ObservableObject {
     func update(_ task: SendTask) {
         guard let index = tasks.firstIndex(where: { $0.id == task.id }) else { return }
         var copy = task
+        copy.scheduledAt = copy.scheduledAt.startOfMinute()
         copy.updatedAt = Date()
         tasks[index] = copy
         sortTasks()
@@ -104,12 +105,24 @@ final class TaskStore: ObservableObject {
 
     private func load() {
         isLoading = true
-        defer { isLoading = false }
+        var shouldSaveAfterMigration = false
+        defer {
+            isLoading = false
+            if shouldSaveAfterMigration { save() }
+        }
         guard let data = try? Data(contentsOf: stateURL),
               let persisted = try? JSONDecoder.leafSend.decode(PersistedState.self, from: data) else {
             return
         }
-        tasks = persisted.tasks
+        tasks = persisted.tasks.map { task in
+            guard task.isEnabled, task.state == .pending else { return task }
+            let normalizedDate = task.scheduledAt.startOfMinute()
+            guard normalizedDate != task.scheduledAt else { return task }
+            shouldSaveAfterMigration = true
+            var copy = task
+            copy.scheduledAt = normalizedDate
+            return copy
+        }
         logs = persisted.logs
         settings = persisted.settings
         sortTasks()

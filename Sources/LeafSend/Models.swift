@@ -1,5 +1,12 @@
 import Foundation
 
+extension Date {
+    /// Returns the beginning of the local calendar minute containing this date.
+    func startOfMinute(using calendar: Calendar = .current) -> Date {
+        calendar.dateInterval(of: .minute, for: self)?.start ?? self
+    }
+}
+
 enum RepeatRule: String, Codable, CaseIterable, Identifiable {
     case once
     case daily

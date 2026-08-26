@@ -62,7 +62,7 @@ private struct BrandHeader: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("微信发送")
                     .font(.system(size: 15, weight: .semibold))
-                Text("本机微信计划任务 · v1.0.4")
+                Text("本机微信计划任务 · v1.0.5")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -381,7 +381,9 @@ private struct TaskEditorView: View {
         _contact = State(initialValue: existingTask?.contact ?? "")
         _message = State(initialValue: existingTask?.message ?? "")
         _files = State(initialValue: existingTask?.filePaths ?? [])
-        _scheduledAt = State(initialValue: existingTask?.scheduledAt ?? Date().addingTimeInterval(300))
+        _scheduledAt = State(
+            initialValue: (existingTask?.scheduledAt ?? Date().addingTimeInterval(300)).startOfMinute()
+        )
         _repeatRule = State(initialValue: existingTask?.repeatRule ?? .once)
         _uniqueContactConfirmed = State(initialValue: existingTask?.uniqueContactConfirmed ?? false)
     }
@@ -455,7 +457,11 @@ private struct TaskEditorView: View {
                 }
 
                 Section("时间") {
-                    DatePicker("发送时间", selection: $scheduledAt)
+                    DatePicker(
+                        "发送时间",
+                        selection: $scheduledAt,
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
                     Picker("重复", selection: $repeatRule) {
                         ForEach(RepeatRule.allCases) { rule in Text(rule.title).tag(rule) }
                     }
@@ -506,7 +512,8 @@ private struct TaskEditorView: View {
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty else {
             validationMessage = "请填写消息或添加附件"; return
         }
-        guard scheduledAt > Date().addingTimeInterval(-5) || existingTask != nil else {
+        let normalizedScheduledAt = scheduledAt.startOfMinute()
+        guard normalizedScheduledAt > Date().addingTimeInterval(-5) || existingTask != nil else {
             validationMessage = "发送时间必须在未来"; return
         }
 
@@ -514,7 +521,7 @@ private struct TaskEditorView: View {
             task.contact = cleanContact
             task.message = message
             task.filePaths = files
-            task.scheduledAt = scheduledAt
+            task.scheduledAt = normalizedScheduledAt
             task.repeatRule = repeatRule
             task.uniqueContactConfirmed = uniqueContactConfirmed
             task.state = .pending
@@ -526,7 +533,7 @@ private struct TaskEditorView: View {
                 contact: cleanContact,
                 message: message,
                 filePaths: files,
-                scheduledAt: scheduledAt,
+                scheduledAt: normalizedScheduledAt,
                 repeatRule: repeatRule,
                 uniqueContactConfirmed: uniqueContactConfirmed
             ))

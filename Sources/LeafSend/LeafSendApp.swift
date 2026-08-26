@@ -57,7 +57,7 @@ private enum AcceptanceRunner {
         }
         let task = SendTask(
             contact: contact,
-            message: "微信发送 v1.0.4 安全验收草稿",
+            message: "微信发送 v1.0.5 安全验收草稿",
             filePaths: [],
             scheduledAt: Date(),
             repeatRule: .once,

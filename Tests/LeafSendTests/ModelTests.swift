@@ -3,6 +3,26 @@ import Testing
 @testable import LeafSend
 
 struct ModelTests {
+    @Test func startOfMinuteDropsStoredSeconds() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let date = calendar.date(from: DateComponents(
+            year: 2026,
+            month: 8,
+            day: 26,
+            hour: 17,
+            minute: 52,
+            second: 48
+        ))!
+
+        let normalized = date.startOfMinute(using: calendar)
+
+        #expect(calendar.component(.minute, from: normalized) == 52)
+        #expect(calendar.component(.second, from: normalized) == 0)
+        #expect(normalized < date)
+        #expect(date.timeIntervalSince(normalized) == 48)
+    }
+
     @Test func oneOffTaskDisablesAfterExecution() {
         let now = Date()
         var task = SendTask(
@@ -55,6 +75,39 @@ struct ModelTests {
         #expect(reloaded.tasks.first?.contact == "测试联系人")
         #expect(reloaded.tasks.first?.filePaths == ["/tmp/a.pdf"])
         #expect(reloaded.tasks.first?.uniqueContactConfirmed == true)
+    }
+
+    @MainActor
+    @Test func pendingTaskMigrationDropsLegacySeconds() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let scheduledAt = calendar.date(from: DateComponents(
+            year: 2026,
+            month: 8,
+            day: 26,
+            hour: 17,
+            minute: 52,
+            second: 48
+        ))!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let url = directory.appendingPathComponent("state.json")
+        let task = SendTask(
+            contact: "测试联系人",
+            message: "测试",
+            filePaths: [],
+            scheduledAt: scheduledAt,
+            repeatRule: .once,
+            uniqueContactConfirmed: true
+        )
+        let state = PersistedState(tasks: [task], logs: [], settings: AppSettings())
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONEncoder.leafSend.encode(state).write(to: url)
+
+        let store = TaskStore(stateURL: url)
+
+        let normalized = try #require(store.tasks.first?.scheduledAt)
+        #expect(calendar.component(.second, from: normalized) == 0)
+        #expect(normalized < scheduledAt)
     }
 
     @Test func legacyTaskDefaultsUniqueContactConfirmationToFalse() throws {

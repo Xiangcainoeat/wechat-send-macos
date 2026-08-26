@@ -40,7 +40,7 @@ enum AutomationError: LocalizedError {
 
 @MainActor
 final class WeChatAutomation {
-    static let revision = "window-focus-v7"
+    static let revision = "direct-input-v8"
 
     private let commandDelay: useconds_t = 250_000
     private let searchFocusDelay: UInt64 = 600_000_000
@@ -111,17 +111,17 @@ final class WeChatAutomation {
                 }
                 return AutomationResult(
                     state: .draftReady,
-                    detail: "v1.0.4：\(source.title)已按确认过的联系人名称打开首项；内容已填入，未按发送键"
+                    detail: "v1.0.5：\(source.title)已按确认过的联系人名称打开首项；内容已填入，未按发送键"
                 )
             }
             return AutomationResult(
                 state: .submitted,
-                detail: "v1.0.4：\(source.title)已按确认过的联系人名称打开首项；已向微信投递发送按键"
+                detail: "v1.0.5：\(source.title)已按确认过的联系人名称打开首项；已向微信投递发送按键"
             )
         } catch {
             return AutomationResult(
                 state: .failed,
-                detail: "v1.0.4：\(source.title)失败：\(error.localizedDescription)"
+                detail: "v1.0.5：\(source.title)失败：\(error.localizedDescription)"
             )
         }
     }
@@ -226,23 +226,14 @@ final class WeChatAutomation {
     }
 
     private func openFirstSearchResult(contact: String, app: NSRunningApplication) async throws {
-        let previousMouseLocation = CGEvent(source: nil)?.location
-        defer {
-            if let previousMouseLocation {
-                restoreMouse(to: previousMouseLocation)
-            }
-        }
-
         try await ensureWeChatFrontmost(app)
         try await openSearchMenu(in: app)
         trace("search_opened")
         try await Task.sleep(nanoseconds: searchFocusDelay)
 
         try await ensureWeChatFrontmost(app)
-        let searchPanel = try await waitForSearchPanel(for: app)
-        try clickSearchField(in: searchPanel)
-        trace("search_field_clicked")
-        try await Task.sleep(nanoseconds: 150_000_000)
+        try await waitForSearchPanel(for: app)
+        trace("search_input_ready")
         try await typeSearchContact(contact, in: app)
         trace("contact_typed")
         try await Task.sleep(nanoseconds: searchResultsDelay)
@@ -260,11 +251,11 @@ final class WeChatAutomation {
         trace("chat_wait_complete")
     }
 
-    private func waitForSearchPanel(for app: NSRunningApplication) async throws -> CGRect {
+    private func waitForSearchPanel(for app: NSRunningApplication) async throws {
         for _ in 0..<20 {
-            if let bounds = searchPanelBounds(for: app.processIdentifier) {
+            if searchPanelBounds(for: app.processIdentifier) != nil {
                 trace("search_panel_found")
-                return bounds
+                return
             }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
@@ -307,42 +298,6 @@ final class WeChatAutomation {
         return nil
     }
 
-    private func clickSearchField(in panel: CGRect) throws {
-        let point = CGPoint(
-            x: panel.midX,
-            y: panel.minY + min(28, panel.height * 0.12)
-        )
-        guard let source = CGEventSource(stateID: .hidSystemState),
-              let down = CGEvent(
-                mouseEventSource: source,
-                mouseType: .leftMouseDown,
-                mouseCursorPosition: point,
-                mouseButton: .left
-              ),
-              let up = CGEvent(
-                mouseEventSource: source,
-                mouseType: .leftMouseUp,
-                mouseCursorPosition: point,
-                mouseButton: .left
-              ) else {
-            throw AutomationError.actionFailed("无法点击微信搜索框，已停止；不会输入或发送消息")
-        }
-        down.post(tap: .cghidEventTap)
-        usleep(50_000)
-        up.post(tap: .cghidEventTap)
-    }
-
-    private func restoreMouse(to point: CGPoint) {
-        guard let source = CGEventSource(stateID: .hidSystemState),
-              let event = CGEvent(
-                mouseEventSource: source,
-                mouseType: .mouseMoved,
-                mouseCursorPosition: point,
-                mouseButton: .left
-              ) else { return }
-        event.post(tap: .cghidEventTap)
-    }
-
     private func openSearchMenu(in app: NSRunningApplication) async throws {
         let application = AXUIElementCreateApplication(app.processIdentifier)
         for attempt in 0..<80 {
@@ -369,8 +324,8 @@ final class WeChatAutomation {
 
     private func typeSearchContact(_ contact: String, in app: NSRunningApplication) async throws {
         try await ensureWeChatFrontmost(app)
-        try globalShortcut(keyCode: KeyCode.a.rawValue, modifiers: .maskCommand)
-        try globalShortcut(keyCode: KeyCode.delete.rawValue, modifiers: [])
+        try shortcut(keyCode: KeyCode.a.rawValue, modifiers: .maskCommand, in: app)
+        try press(.delete, in: app)
 
         guard let source = CGEventSource(stateID: .hidSystemState) else {
             throw AutomationError.actionFailed("无法创建联系人输入事件，已停止")
@@ -404,9 +359,9 @@ final class WeChatAutomation {
             guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
                 throw AutomationError.actionFailed("输入联系人时微信失去前台焦点，已停止")
             }
-            down.post(tap: .cghidEventTap)
+            down.postToPid(app.processIdentifier)
             usleep(35_000)
-            up.post(tap: .cghidEventTap)
+            up.postToPid(app.processIdentifier)
         }
         usleep(commandDelay)
     }
@@ -486,20 +441,6 @@ final class WeChatAutomation {
         down.postToPid(app.processIdentifier)
         usleep(50_000)
         up.postToPid(app.processIdentifier)
-        usleep(commandDelay)
-    }
-
-    private func globalShortcut(keyCode: CGKeyCode, modifiers: CGEventFlags) throws {
-        guard let source = CGEventSource(stateID: .hidSystemState),
-              let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
-            throw AutomationError.actionFailed("无法创建键盘事件")
-        }
-        down.flags = modifiers
-        up.flags = modifiers
-        down.post(tap: .cghidEventTap)
-        usleep(50_000)
-        up.post(tap: .cghidEventTap)
         usleep(commandDelay)
     }
 

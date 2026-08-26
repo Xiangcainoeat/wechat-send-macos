@@ -8,6 +8,7 @@ final class TaskScheduler: ObservableObject {
 
     private let store: TaskStore
     private let clearDraftAfterPreview: Bool
+    private let schedulerInterval: TimeInterval = 0.25
     private var timer: Timer?
 
     init(
@@ -26,7 +27,7 @@ final class TaskScheduler: ObservableObject {
 
     func start() {
         timer?.invalidate()
-        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: schedulerInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -60,7 +61,7 @@ final class TaskScheduler: ObservableObject {
         if source == .scheduled {
             store.setState(
                 .running,
-                detail: "v1.0.4：定时任务正在打开微信并搜索联系人",
+                detail: "v1.0.5：定时任务正在打开微信并搜索联系人",
                 for: task.id
             )
         }

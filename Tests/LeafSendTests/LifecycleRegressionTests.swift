@@ -25,7 +25,7 @@ struct LifecycleRegressionTests {
         #expect(automation.contains("restore(previouslyFrontmostApplication)"))
     }
 
-    @Test func contactSelectionTypesThenDirectlyConfirmsFirstResult() throws {
+    @Test func contactSelectionTypesDirectlyIntoSearchThenConfirmsFirstResult() throws {
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
         let openSearch = try #require(automation.range(of: "try await openSearchMenu(in: app)"))
         let typeContact = try #require(automation.range(of: "try await typeSearchContact(contact, in: app)"))
@@ -41,11 +41,13 @@ struct LifecycleRegressionTests {
         #expect(automation.contains("NSWorkspace.shared.openApplication"))
         #expect(automation.contains("configuration.activates = true"))
         #expect(automation.contains("raiseMainWindow(of: app)"))
-        #expect(automation.contains("let searchPanel = try await waitForSearchPanel(for: app)"))
-        #expect(automation.contains("try clickSearchField(in: searchPanel)"))
+        #expect(automation.contains("try await waitForSearchPanel(for: app)"))
+        #expect(automation.contains("trace(\"search_input_ready\")"))
         #expect(automation.contains("trace(\"search_panel_found\")"))
-        #expect(automation.contains("trace(\"search_field_clicked\")"))
         #expect(automation.contains("trace(\"search_panel_closed\")"))
+        #expect(!automation.contains("clickSearchField"))
+        #expect(!automation.contains("restoreMouse"))
+        #expect(!automation.contains("mouseEventSource"))
         #expect(!automation.contains("putStringOnPasteboard(contact)"))
         #expect(!automation.contains("ScreenCaptureService"))
         #expect(!automation.contains("VisionOCR"))
@@ -61,12 +63,12 @@ struct LifecycleRegressionTests {
         let views = try source("Sources/LeafSend/Views.swift")
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
 
-        #expect(info["CFBundleShortVersionString"] as? String == "1.0.4")
-        #expect(info["CFBundleVersion"] as? String == "104")
+        #expect(info["CFBundleShortVersionString"] as? String == "1.0.5")
+        #expect(info["CFBundleVersion"] as? String == "105")
         #expect(info["NSScreenCaptureUsageDescription"] == nil)
         #expect(info["NSAppleEventsUsageDescription"] == nil)
-        #expect(views.contains("v1.0.4"))
-        #expect(automation.contains("v1.0.4："))
+        #expect(views.contains("v1.0.5"))
+        #expect(automation.contains("v1.0.5："))
     }
 
     @Test func applicationDoesNotRequestScreenCaptureOrReadWeChatDataDirectory() throws {
@@ -124,7 +126,7 @@ struct LifecycleRegressionTests {
             "search_opened",
             "search_menu_ready",
             "search_panel_found",
-            "search_field_clicked",
+            "search_input_ready",
             "contact_typed",
             "search_results_wait_complete",
             "contact_uniqueness_acknowledged",
@@ -145,6 +147,20 @@ struct LifecycleRegressionTests {
         #expect(scheduler.contains("if source == .scheduled"))
         #expect(scheduler.contains("advancesSchedule: source == .scheduled"))
         #expect(scheduler.contains("RunLoop.main.add(timer, forMode: .common)"))
+        #expect(scheduler.contains("schedulerInterval: TimeInterval = 0.25"))
+        #expect(!scheduler.contains("Timer(timeInterval: 5"))
+    }
+
+    @Test func scheduleEditorAlignsTimesToMinuteBoundaries() throws {
+        let models = try source("Sources/LeafSend/Models.swift")
+        let views = try source("Sources/LeafSend/Views.swift")
+
+        #expect(models.contains("func startOfMinute(using calendar: Calendar = .current) -> Date"))
+        #expect(views.contains("let normalizedScheduledAt = scheduledAt.startOfMinute()"))
+        #expect(views.contains("displayedComponents: [.date, .hourAndMinute]"))
+        let store = try source("Sources/LeafSend/TaskStore.swift")
+        #expect(store.contains("shouldSaveAfterMigration"))
+        #expect(store.contains("task.isEnabled, task.state == .pending"))
     }
 
     private func source(_ relativePath: String) throws -> String {
