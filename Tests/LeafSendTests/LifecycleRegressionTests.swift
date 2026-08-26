@@ -27,8 +27,8 @@ struct LifecycleRegressionTests {
 
     @Test func contactSelectionTypesThenDirectlyConfirmsFirstResult() throws {
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
-        let openSearch = try #require(automation.range(of: "try openSearchMenu(in: app)"))
-        let typeContact = try #require(automation.range(of: "try typeSearchContact(contact, in: app)"))
+        let openSearch = try #require(automation.range(of: "try await openSearchMenu(in: app)"))
+        let typeContact = try #require(automation.range(of: "try await typeSearchContact(contact, in: app)"))
         let wait = try #require(automation.range(of: "trace(\"search_results_wait_complete\")"))
         let acknowledged = try #require(automation.range(of: "trace(\"contact_uniqueness_acknowledged\")"))
         let submit = try #require(automation.range(of: "trace(\"search_confirm_enter_posted\")"))
@@ -37,6 +37,15 @@ struct LifecycleRegressionTests {
         #expect(typeContact.lowerBound < wait.lowerBound)
         #expect(wait.lowerBound < acknowledged.lowerBound)
         #expect(acknowledged.lowerBound < submit.lowerBound)
+        #expect(automation.contains("@MainActor\nfinal class WeChatAutomation"))
+        #expect(automation.contains("NSWorkspace.shared.openApplication"))
+        #expect(automation.contains("configuration.activates = true"))
+        #expect(automation.contains("raiseMainWindow(of: app)"))
+        #expect(automation.contains("let searchPanel = try await waitForSearchPanel(for: app)"))
+        #expect(automation.contains("try clickSearchField(in: searchPanel)"))
+        #expect(automation.contains("trace(\"search_panel_found\")"))
+        #expect(automation.contains("trace(\"search_field_clicked\")"))
+        #expect(automation.contains("trace(\"search_panel_closed\")"))
         #expect(!automation.contains("putStringOnPasteboard(contact)"))
         #expect(!automation.contains("ScreenCaptureService"))
         #expect(!automation.contains("VisionOCR"))
@@ -52,12 +61,12 @@ struct LifecycleRegressionTests {
         let views = try source("Sources/LeafSend/Views.swift")
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
 
-        #expect(info["CFBundleShortVersionString"] as? String == "1.0.3")
-        #expect(info["CFBundleVersion"] as? String == "103")
+        #expect(info["CFBundleShortVersionString"] as? String == "1.0.4")
+        #expect(info["CFBundleVersion"] as? String == "104")
         #expect(info["NSScreenCaptureUsageDescription"] == nil)
         #expect(info["NSAppleEventsUsageDescription"] == nil)
-        #expect(views.contains("v1.0.3"))
-        #expect(automation.contains("v1.0.3："))
+        #expect(views.contains("v1.0.4"))
+        #expect(automation.contains("v1.0.4："))
     }
 
     @Test func applicationDoesNotRequestScreenCaptureOrReadWeChatDataDirectory() throws {
@@ -71,6 +80,14 @@ struct LifecycleRegressionTests {
         #expect(!permissions.contains("CGPreflightScreenCaptureAccess"))
         #expect(!status.contains("xwechat_files"))
         #expect(!status.contains("Library/Containers"))
+    }
+
+    @Test func statusInspectionUsesTheSameMainProcessPathAsAutomation() throws {
+        let status = try source("Sources/LeafSend/WeChatStatusMonitor.swift")
+
+        #expect(status.contains("static func inspect() -> WeChatSnapshot"))
+        #expect(!status.contains("Task.detached"))
+        #expect(status.contains("$0.bundleIdentifier == \"com.tencent.xinWeChat\""))
     }
 
     @Test func publicReadmeExplainsTechnologyAndExecutionPipelineWithoutLocalPaths() throws {
@@ -105,10 +122,14 @@ struct LifecycleRegressionTests {
         let automation = try source("Sources/LeafSend/WeChatAutomation.swift")
         for stage in [
             "search_opened",
+            "search_menu_ready",
+            "search_panel_found",
+            "search_field_clicked",
             "contact_typed",
             "search_results_wait_complete",
             "contact_uniqueness_acknowledged",
             "search_confirm_enter_posted",
+            "search_panel_closed",
             "chat_wait_complete",
             "message_pasted",
             "message_send_enter_posted",

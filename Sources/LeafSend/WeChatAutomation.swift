@@ -38,8 +38,9 @@ enum AutomationError: LocalizedError {
     }
 }
 
+@MainActor
 final class WeChatAutomation {
-    static let revision = "direct-search-v5"
+    static let revision = "window-focus-v7"
 
     private let commandDelay: useconds_t = 250_000
     private let searchFocusDelay: UInt64 = 600_000_000
@@ -71,11 +72,11 @@ final class WeChatAutomation {
             try await openFirstSearchResult(contact: task.contact, app: app)
 
             if !task.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                try ensureWeChatFrontmost(app)
+                try await ensureWeChatFrontmost(app)
                 try pasteText(task.message, into: app)
                 trace("message_pasted")
                 if realSend {
-                    try ensureWeChatFrontmost(app)
+                    try await ensureWeChatFrontmost(app)
                     try press(.returnKey, in: app)
                     trace("message_send_enter_posted")
                     usleep(500_000)
@@ -89,12 +90,12 @@ final class WeChatAutomation {
                         detail: "文字草稿已填入；安全预览模式不会继续粘贴附件，避免覆盖草稿"
                     )
                 }
-                try ensureWeChatFrontmost(app)
+                try await ensureWeChatFrontmost(app)
                 try pasteFiles(task.filePaths, into: app)
                 trace("files_pasted")
                 if realSend {
                     usleep(800_000)
-                    try ensureWeChatFrontmost(app)
+                    try await ensureWeChatFrontmost(app)
                     try press(.returnKey, in: app)
                     trace("file_send_enter_posted")
                     usleep(1_000_000)
@@ -103,24 +104,24 @@ final class WeChatAutomation {
 
             if !realSend {
                 if clearDraftAfterPreview && !task.message.isEmpty && task.filePaths.isEmpty {
-                    try ensureWeChatFrontmost(app)
+                    try await ensureWeChatFrontmost(app)
                     try shortcut(keyCode: KeyCode.a.rawValue, modifiers: .maskCommand, in: app)
                     try press(.delete, in: app)
                     trace("preview_draft_cleared")
                 }
                 return AutomationResult(
                     state: .draftReady,
-                    detail: "v1.0.3：\(source.title)已按确认过的联系人名称打开首项；内容已填入，未按发送键"
+                    detail: "v1.0.4：\(source.title)已按确认过的联系人名称打开首项；内容已填入，未按发送键"
                 )
             }
             return AutomationResult(
                 state: .submitted,
-                detail: "v1.0.3：\(source.title)已按确认过的联系人名称打开首项；已向微信投递发送按键"
+                detail: "v1.0.4：\(source.title)已按确认过的联系人名称打开首项；已向微信投递发送按键"
             )
         } catch {
             return AutomationResult(
                 state: .failed,
-                detail: "v1.0.3：\(source.title)失败：\(error.localizedDescription)"
+                detail: "v1.0.4：\(source.title)失败：\(error.localizedDescription)"
             )
         }
     }
@@ -149,91 +150,225 @@ final class WeChatAutomation {
     }
 
     private func activateWeChat() async throws -> NSRunningApplication {
-        let candidates = NSWorkspace.shared.runningApplications.filter {
-            $0.bundleIdentifier == "com.tencent.xinWeChat" ||
-            $0.localizedName == "WeChat" || $0.localizedName == "微信"
+        guard let applicationURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.tencent.xinWeChat"
+        ) else {
+            throw AutomationError.weChatNotRunning
         }
-        let app: NSRunningApplication
-        if let running = candidates.first {
-            app = running
-        } else {
-            guard let applicationURL = NSWorkspace.shared.urlForApplication(
-                withBundleIdentifier: "com.tencent.xinWeChat"
-            ) else {
-                throw AutomationError.weChatNotRunning
-            }
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
-            app = try await NSWorkspace.shared.openApplication(
-                at: applicationURL,
-                configuration: configuration
-            )
+
+        // Launch Services performs the real app switch. NSRunningApplication.activate()
+        // can report success while the previous app still owns the menu bar.
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        let app = try await NSWorkspace.shared.openApplication(
+            at: applicationURL,
+            configuration: configuration
+        )
+        guard app.bundleIdentifier == "com.tencent.xinWeChat" else {
+            throw AutomationError.weChatNotRunning
         }
-        try ensureWeChatFrontmost(app)
+        try await activateWeChatFrontmost(app)
         return app
     }
 
-    private func ensureWeChatFrontmost(_ app: NSRunningApplication) throws {
-        let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
-
-        for _ in 0..<3 {
-            if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier {
-                return
+    private func activateWeChatFrontmost(_ app: NSRunningApplication) async throws {
+        for attempt in 0..<30 {
+            if isWeChatFrontmost(app) { return }
+            requestWeChatActivation(app)
+            raiseMainWindow(of: app)
+            if isWeChatFrontmost(app) { return }
+            if attempt < 29 {
+                try await Task.sleep(nanoseconds: 150_000_000)
             }
-
-            app.unhide()
-            app.activate(options: [.activateAllWindows])
-            AXUIElementSetAttributeValue(
-                applicationElement,
-                kAXFrontmostAttribute as CFString,
-                kCFBooleanTrue
-            )
-            Thread.sleep(forTimeInterval: 0.35)
         }
 
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
-            throw AutomationError.actionFailed("无法将微信保持在前台，已停止；不会输入或发送内容")
+        throw AutomationError.actionFailed("无法将微信激活到前台，已停止；不会输入或发送内容")
+    }
+
+    private func ensureWeChatFrontmost(_ app: NSRunningApplication) async throws {
+        for attempt in 0..<20 {
+            if isWeChatFrontmost(app) { return }
+            requestWeChatActivation(app)
+            raiseMainWindow(of: app)
+            if isWeChatFrontmost(app) { return }
+            if attempt < 19 {
+                try await Task.sleep(nanoseconds: 150_000_000)
+            }
         }
+
+        throw AutomationError.actionFailed("无法将微信保持在前台，已停止；不会输入或发送内容")
+    }
+
+    private func isWeChatFrontmost(_ app: NSRunningApplication) -> Bool {
+        NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier && app.isActive
+    }
+
+    private func requestWeChatActivation(_ app: NSRunningApplication) {
+        app.unhide()
+        _ = app.activate(options: [.activateAllWindows])
+        let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
+        _ = AXUIElementSetAttributeValue(
+            applicationElement,
+            kAXFrontmostAttribute as CFString,
+            kCFBooleanTrue
+        )
+    }
+
+    private func raiseMainWindow(of app: NSRunningApplication) {
+        let application = AXUIElementCreateApplication(app.processIdentifier)
+        guard let windows = axElements(application, attribute: kAXWindowsAttribute),
+              let window = windows.first(where: { axString($0, attribute: kAXTitleAttribute) == "微信" }) ?? windows.first else {
+            return
+        }
+        _ = AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+        _ = AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        _ = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
     }
 
     private func openFirstSearchResult(contact: String, app: NSRunningApplication) async throws {
-        try ensureWeChatFrontmost(app)
-        try openSearchMenu(in: app)
+        let previousMouseLocation = CGEvent(source: nil)?.location
+        defer {
+            if let previousMouseLocation {
+                restoreMouse(to: previousMouseLocation)
+            }
+        }
+
+        try await ensureWeChatFrontmost(app)
+        try await openSearchMenu(in: app)
         trace("search_opened")
         try await Task.sleep(nanoseconds: searchFocusDelay)
 
-        try ensureWeChatFrontmost(app)
-        try typeSearchContact(contact, in: app)
+        try await ensureWeChatFrontmost(app)
+        let searchPanel = try await waitForSearchPanel(for: app)
+        try clickSearchField(in: searchPanel)
+        trace("search_field_clicked")
+        try await Task.sleep(nanoseconds: 150_000_000)
+        try await typeSearchContact(contact, in: app)
         trace("contact_typed")
         try await Task.sleep(nanoseconds: searchResultsDelay)
 
-        try ensureWeChatFrontmost(app)
+        try await ensureWeChatFrontmost(app)
         trace("search_results_wait_complete")
         trace("contact_uniqueness_acknowledged")
 
-        try ensureWeChatFrontmost(app)
+        try await ensureWeChatFrontmost(app)
         try press(.returnKey, in: app)
         trace("search_confirm_enter_posted")
+        try await waitForSearchPanelToClose(for: app)
         try await Task.sleep(nanoseconds: chatOpenDelay)
-        try ensureWeChatFrontmost(app)
+        try await ensureWeChatFrontmost(app)
         trace("chat_wait_complete")
     }
 
-    private func openSearchMenu(in app: NSRunningApplication) throws {
-        let application = AXUIElementCreateApplication(app.processIdentifier)
-        guard let menuBar = axElement(application, attribute: kAXMenuBarAttribute),
-              let editMenu = findAXElement(in: menuBar, titles: ["编辑", "Edit"], roles: [kAXMenuBarItemRole as String]),
-              let searchItem = findAXElement(in: editMenu, titles: ["搜索", "Search"], roles: [kAXMenuItemRole as String]) else {
-            throw AutomationError.actionFailed("找不到微信菜单“编辑 → 搜索”，已停止")
+    private func waitForSearchPanel(for app: NSRunningApplication) async throws -> CGRect {
+        for _ in 0..<20 {
+            if let bounds = searchPanelBounds(for: app.processIdentifier) {
+                trace("search_panel_found")
+                return bounds
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
         }
-        let result = AXUIElementPerformAction(searchItem, kAXPressAction as CFString)
-        guard result == .success else {
-            throw AutomationError.actionFailed("无法打开微信搜索面板，已停止")
-        }
+        throw AutomationError.actionFailed(
+            "微信搜索面板没有出现，已停止；不会输入联系人或发送消息"
+        )
     }
 
-    private func typeSearchContact(_ contact: String, in app: NSRunningApplication) throws {
-        try ensureWeChatFrontmost(app)
+    private func waitForSearchPanelToClose(for app: NSRunningApplication) async throws {
+        for _ in 0..<20 {
+            if searchPanelBounds(for: app.processIdentifier) == nil {
+                trace("search_panel_closed")
+                return
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        throw AutomationError.actionFailed(
+            "微信搜索面板没有关闭，未确认已进入联系人聊天；不会粘贴或发送消息"
+        )
+    }
+
+    private func searchPanelBounds(for processIdentifier: pid_t) -> CGRect? {
+        let windows = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] ?? []
+
+        for info in windows {
+            guard (info[kCGWindowOwnerPID as String] as? Int32) == processIdentifier,
+                  (info[kCGWindowLayer as String] as? Int) == 3,
+                  let rawBounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: rawBounds as CFDictionary),
+                  rect.width >= 300,
+                  rect.height >= 250,
+                  rect.height <= 700 else {
+                continue
+            }
+            return rect
+        }
+        return nil
+    }
+
+    private func clickSearchField(in panel: CGRect) throws {
+        let point = CGPoint(
+            x: panel.midX,
+            y: panel.minY + min(28, panel.height * 0.12)
+        )
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let down = CGEvent(
+                mouseEventSource: source,
+                mouseType: .leftMouseDown,
+                mouseCursorPosition: point,
+                mouseButton: .left
+              ),
+              let up = CGEvent(
+                mouseEventSource: source,
+                mouseType: .leftMouseUp,
+                mouseCursorPosition: point,
+                mouseButton: .left
+              ) else {
+            throw AutomationError.actionFailed("无法点击微信搜索框，已停止；不会输入或发送消息")
+        }
+        down.post(tap: .cghidEventTap)
+        usleep(50_000)
+        up.post(tap: .cghidEventTap)
+    }
+
+    private func restoreMouse(to point: CGPoint) {
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let event = CGEvent(
+                mouseEventSource: source,
+                mouseType: .mouseMoved,
+                mouseCursorPosition: point,
+                mouseButton: .left
+              ) else { return }
+        event.post(tap: .cghidEventTap)
+    }
+
+    private func openSearchMenu(in app: NSRunningApplication) async throws {
+        let application = AXUIElementCreateApplication(app.processIdentifier)
+        for attempt in 0..<80 {
+            if let menuBar = axElement(application, attribute: kAXMenuBarAttribute),
+               let editMenu = findAXElement(in: menuBar, titles: ["编辑", "Edit"], roles: [kAXMenuBarItemRole as String]),
+               let searchItem = findAXElement(in: editMenu, titles: ["搜索", "Search"], roles: [kAXMenuItemRole as String]) {
+                let result = AXUIElementPerformAction(searchItem, kAXPressAction as CFString)
+                if result == .success {
+                    trace("search_menu_ready")
+                    return
+                }
+            }
+
+            if attempt % 5 == 4 {
+                try? await ensureWeChatFrontmost(app)
+            }
+            if attempt % 10 == 9 {
+                try? await activateWeChatFrontmost(app)
+            }
+            try await Task.sleep(nanoseconds: 125_000_000)
+        }
+        throw AutomationError.actionFailed("找不到微信菜单“编辑 → 搜索”，已停止")
+    }
+
+    private func typeSearchContact(_ contact: String, in app: NSRunningApplication) async throws {
+        try await ensureWeChatFrontmost(app)
         try globalShortcut(keyCode: KeyCode.a.rawValue, modifiers: .maskCommand)
         try globalShortcut(keyCode: KeyCode.delete.rawValue, modifiers: [])
 
@@ -280,6 +415,12 @@ final class WeChatAutomation {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
         return value as! AXUIElement?
+    }
+
+    private func axElements(_ element: AXUIElement, attribute: String) -> [AXUIElement]? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
+        return value as? [AXUIElement]
     }
 
     private func axString(_ element: AXUIElement, attribute: String) -> String? {

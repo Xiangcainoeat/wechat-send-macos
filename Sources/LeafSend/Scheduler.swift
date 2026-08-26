@@ -60,7 +60,7 @@ final class TaskScheduler: ObservableObject {
         if source == .scheduled {
             store.setState(
                 .running,
-                detail: "v1.0.3：定时任务正在打开微信并搜索联系人",
+                detail: "v1.0.4：定时任务正在打开微信并搜索联系人",
                 for: task.id
             )
         }

@@ -46,22 +46,14 @@ final class WeChatStatusMonitor: ObservableObject {
         isRefreshing = true
         snapshot.detail = "正在检查微信状态..."
         snapshot.checkedAt = Date()
-        Task { [weak self] in
-            let result = await Task.detached(priority: .utility) {
-                await Self.inspect()
-            }.value
-            await MainActor.run {
-                self?.snapshot = result
-                self?.isRefreshing = false
-            }
-        }
+        snapshot = Self.inspect()
+        isRefreshing = false
     }
 
-    nonisolated static func inspect() async -> WeChatSnapshot {
+    static func inspect() -> WeChatSnapshot {
         let now = Date()
         guard let app = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier == "com.tencent.xinWeChat" ||
-            $0.localizedName == "WeChat" || $0.localizedName == "微信"
+            $0.bundleIdentifier == "com.tencent.xinWeChat"
         }) else {
             return WeChatSnapshot(phase: .notRunning, detail: "请先打开并登录微信", checkedAt: now)
         }
@@ -83,7 +75,7 @@ final class WeChatStatusMonitor: ObservableObject {
         )
     }
 
-    nonisolated private static func searchMenuIsAvailable(for processIdentifier: pid_t) -> Bool {
+    private static func searchMenuIsAvailable(for processIdentifier: pid_t) -> Bool {
         let application = AXUIElementCreateApplication(processIdentifier)
         guard let menuBar = element(application, attribute: kAXMenuBarAttribute),
               let editMenu = findElement(
@@ -106,7 +98,7 @@ final class WeChatStatusMonitor: ObservableObject {
         return (value as? Bool) ?? true
     }
 
-    nonisolated private static func element(_ element: AXUIElement, attribute: String) -> AXUIElement? {
+    private static func element(_ element: AXUIElement, attribute: String) -> AXUIElement? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
             return nil
@@ -114,7 +106,7 @@ final class WeChatStatusMonitor: ObservableObject {
         return value as! AXUIElement?
     }
 
-    nonisolated private static func string(_ element: AXUIElement, attribute: String) -> String? {
+    private static func string(_ element: AXUIElement, attribute: String) -> String? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
             return nil
@@ -122,7 +114,7 @@ final class WeChatStatusMonitor: ObservableObject {
         return value as? String
     }
 
-    nonisolated private static func children(_ element: AXUIElement) -> [AXUIElement] {
+    private static func children(_ element: AXUIElement) -> [AXUIElement] {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
             element,
@@ -132,7 +124,7 @@ final class WeChatStatusMonitor: ObservableObject {
         return value as? [AXUIElement] ?? []
     }
 
-    nonisolated private static func findElement(
+    private static func findElement(
         in root: AXUIElement,
         titles: [String],
         roles: [String],

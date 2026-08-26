@@ -29,6 +29,7 @@
   → 记录执行前正在使用的应用
   → 激活已登录的微信
   → 通过辅助功能打开“编辑 → 搜索”
+  → 通过 WindowServer 元数据找到微信独立搜索面板并点击其搜索框
   → 使用 CGEvent 逐字输入联系人
   → 等待微信刷新搜索结果
   → 直接按 Enter 打开第一项
@@ -49,7 +50,7 @@
 | UI 自动化 | macOS Accessibility API、`AXUIElement` | 检查微信搜索菜单并执行“编辑 → 搜索” |
 | 键盘输入 | Core Graphics、`CGEvent` | 逐字输入联系人、提交 Enter、粘贴内容和清理预览草稿 |
 | 内容传递 | `NSPasteboard` | 向微信输入文字和本机文件 URL |
-| 应用状态 | `NSWorkspace`、Accessibility API | 检查微信进程及搜索菜单是否可用 |
+| 应用激活与窗口定位 | `NSWorkspace`、Accessibility API、`CGWindowListCopyWindowInfo` | 通过 Launch Services 激活微信主进程，检查搜索菜单和独立搜索面板是否可用 |
 | 本地调度 | Foundation `Timer`、Swift Concurrency | 在主运行循环公共模式中每 5 秒检查到期任务并串行执行 |
 | 数据保存 | `Codable`、JSON、原子写入 | 保存任务、设置和最近 200 条执行记录 |
 | 后台常驻 | macOS LaunchAgent | 登录后启动并保持调度器运行 |
@@ -69,13 +70,13 @@
 
 ### 3. 微信状态检查
 
-`WeChatStatusMonitor` 每 15 秒通过 `NSWorkspace` 检查微信进程，并在已有辅助功能权限时只读检查“编辑 → 搜索”菜单是否可用。它不打开微信数据目录，不读取 `wxid`、联系人表或聊天数据库。界面中的微信名或微信号由用户自行填写，仅作为本机状态标注。
+`WeChatStatusMonitor` 每 15 秒在主线程通过 `NSWorkspace` 检查微信主进程，并在已有辅助功能权限时只读检查“编辑 → 搜索”菜单是否可用。执行时会在主线程通过 Launch Services 真正激活微信；随后用 Accessibility 提升微信主窗口，避免 `NSRunningApplication.activate()` 返回成功但前台仍停留在其他应用。最后通过 `CGWindowListCopyWindowInfo` 只读取微信搜索浮窗的 PID、层级和边界，不读取窗口图像或文字。它不打开微信数据目录，不读取 `wxid`、联系人表或聊天数据库。界面中的微信名或微信号由用户自行填写，仅作为本机状态标注。
 
 ### 4. 打开搜索并输入联系人
 
-程序先记录当前前台应用，再激活微信，通过 Accessibility API 遍历菜单栏并触发“编辑 → 搜索”。微信 4.x 的搜索控件并不总是暴露在可访问性树中，而且一次性粘贴文字有时不会触发搜索刷新，所以程序清空搜索框后，使用 `CGEvent` 按 Unicode 字符逐字输入联系人。
+程序先记录当前前台应用，再在主线程通过 Launch Services 激活微信，并提升其主窗口，确保当前菜单属于微信而不是原先的应用。随后通过 Accessibility API 遍历菜单栏并触发“编辑 → 搜索”。微信 4.x 的搜索控件并不总是暴露在可访问性树中，因此程序等待微信主进程创建独立搜索浮窗，通过 WindowServer 元数据确认浮窗存在，然后点击浮窗顶部的搜索框取得焦点。程序清空搜索框后，使用 `CGEvent` 按 Unicode 字符逐字输入联系人。
 
-输入完成后程序等待搜索结果稳定，再按用户已经确认的唯一名称直接按 Enter 打开第一项。整个过程不截图、不做 OCR、不依赖坐标点击，也不把联系人名称放入剪贴板。
+输入完成后程序等待搜索结果稳定，再按用户已经确认的唯一名称直接按 Enter 打开第一项。程序会在 Enter 后确认独立搜索面板已经关闭，只有确认进入下一步才会粘贴消息。整个过程不截图、不做 OCR、不读取窗口内容，也不把联系人名称放入剪贴板。
 
 ### 5. 消息与附件发送
 
@@ -100,7 +101,7 @@
 
 ## 下载与安装
 
-从 [Releases](https://github.com/Xiangcainoeat/wechat-send-macos/releases) 下载 `WeChatSend-v1.0.3-macOS.zip`，解压后把“微信发送.app”移动到“应用程序”。
+从 [Releases](https://github.com/Xiangcainoeat/wechat-send-macos/releases) 下载 `WeChatSend-v1.0.4-macOS.zip`，解压后把“微信发送.app”移动到“应用程序”。
 
 当前公开压缩包使用 ad-hoc 签名，没有 Apple Developer ID 公证。首次打开若被 Gatekeeper 阻止，请在“系统设置 → 隐私与安全性”中核对应用来源后选择“仍要打开”。不信任预编译文件时，请按下一节从源码构建。
 
@@ -149,4 +150,4 @@ chmod +x scripts/build-app.sh scripts/install-app.sh
 
 ## 版本
 
-当前公开版本：`1.0.3`。详细变更见 [CHANGELOG.md](CHANGELOG.md)。
+当前公开版本：`1.0.4`。详细变更见 [CHANGELOG.md](CHANGELOG.md)。

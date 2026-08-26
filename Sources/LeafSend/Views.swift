@@ -62,7 +62,7 @@ private struct BrandHeader: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("微信发送")
                     .font(.system(size: 15, weight: .semibold))
-                Text("本机微信计划任务 · v1.0.3")
+                Text("本机微信计划任务 · v1.0.4")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
